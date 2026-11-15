@@ -1,0 +1,38 @@
+# ---------- 签名私钥与本地口令（绝不入库）----------
+*.keystore
+*.jks
+*.idsig
+.keystore.pass
+
+# ---------- Android 构建产物 ----------
+mobile/android/build/
+mobile/android/assets/
+mobile/android/gen/
+mobile/android/compiled/
+mobile/android/classes/
+mobile/android/dex/
+
+# ---------- PC 构建产物 ----------
+desktop/build/
+desktop/dist/
+desktop/*.spec
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---------- 含一次性 token / 运行期临时文件 ----------
+pair_info.json
+*pair_info*.json
+*pair_qr*.png
+verify_link_result.json
+*.log
+
+# ---------- 编辑器 / 系统 ----------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

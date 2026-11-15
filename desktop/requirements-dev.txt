@@ -1,0 +1,18 @@
+# PULSE · 开发/验证依赖（运行主程序不需要，仅跑验证脚本与生成截图时安装）
+# 运行主程序只需 requirements.txt（PySide6-Essentials + segno）
+#
+#   python3.12 -m pip install -r requirements.txt -r requirements-dev.txt
+#
+# 另需系统级 Chromium（供 verify_link.py 通过 CDP 加载真实页面）：
+#   Ubuntu/Debian: sudo apt-get install -y chromium
+#   macOS:         brew install --cask chromium  （或指定 CHROME_PATH）
+# 以及 Android SDK build-tools;35.0.0（构建 APK，见 ../PulseApp/android/build.sh）
+
+# 二维码解码校验（verify_pair.py 用真实解码器验证 segno 生成的二维码）
+zxingcpp>=2.0
+
+# 截图 PNG 尺寸/像素/合成校验（verify_pair.py、verify_studio.py、合成展示图）
+Pillow>=10.0
+
+# Chrome DevTools Protocol 客户端（verify_link.py 驱动无头 Chromium）
+websocket-client>=1.6
