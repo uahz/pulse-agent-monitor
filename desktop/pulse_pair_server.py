@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 API_PATH = "/api/tasks"
 HEALTH_PATH = "/api/health"
+EVENTS_PATH = "/api/events"   # P0：POST 推送 Agent 事件（仅 http 事件模式启用）
 DEFAULT_PORT = 8765
 # 配对协议版本（HTTP 接口契约），与 PC 应用 UI 版本 APP_VER 解耦：
 # 自 v1.3.0 引入后接口字段未变，故保持 1.3.0 以保证移动端 v1.4.0 与旧版兼容。
@@ -178,7 +179,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "ok": True, "service": "PULSE Pair", "version": PAIR_VERSION,
                 "port": self.server.server_address[1],
                 "token_required": True, "requests": state.requests,
-                "endpoints": [HEALTH_PATH, API_PATH],
+                "endpoints": [HEALTH_PATH, API_PATH]
+                              + ([EVENTS_PATH] if self.server.event_source else []),
             })
             return
         if u.path == API_PATH:
@@ -203,6 +205,44 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send_json(404, {"ok": False, "error": "not_found", "endpoints": [HEALTH_PATH, API_PATH]})
 
+    # ---------------- P0：接收外部 Agent 事件推送 ----------------
+    def do_POST(self):
+        u = urlparse(self.path)
+        state = self.server.state
+        src = self.server.event_source
+        if u.path != EVENTS_PATH or src is None:
+            self._send_json(404, {"ok": False, "error": "not_found",
+                                  "hint": "POST 事件通道仅在 --source http 模式开放"})
+            return
+        token = parse_qs(u.query).get("token", [""])[0]
+        if not token:
+            token = self.headers.get("X-Pulse-Token", "")
+        if not token or not secrets.compare_digest(token, state.token):
+            self._send_json(401, {"ok": False, "error": "invalid_token"})
+            return
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_json(400, {"ok": False, "error": "bad_length"})
+            return
+        if n <= 0 or n > 262144:  # 256KB 上限
+            self._send_json(400, {"ok": False, "error": "bad_length", "max": 262144})
+            return
+        try:
+            raw = json.loads(self.rfile.read(n).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self._send_json(400, {"ok": False, "error": "bad_json"})
+            return
+        items = raw.get("events") if isinstance(raw, dict) else raw
+        if not isinstance(items, list):
+            items = [raw]
+        accepted, rejected = 0, 0
+        for obj in items[:256]:
+            ok, _why = src.push(obj)
+            accepted += 1 if ok else 0
+            rejected += 0 if ok else 1
+        self._send_json(200, {"ok": True, "accepted": accepted, "rejected": rejected})
+
 
 class PairServer:
     def __init__(self, port=DEFAULT_PORT):
@@ -212,6 +252,11 @@ class PairServer:
         self.error = ""
         self._httpd = None
         self._thread = None
+        self.event_source = None  # HttpEventSource，仅 http 事件模式下由宿主注入
+
+    def set_event_source(self, source):
+        """宿主在 start() 前调用；注入后 health 会列出 /api/events。"""
+        self.event_source = source
 
     def start(self):
         last = ""
@@ -220,6 +265,7 @@ class PairServer:
                 httpd = ThreadingHTTPServer(("0.0.0.0", p), _Handler)
                 httpd.daemon_threads = True
                 httpd.state = self.state
+                httpd.event_source = self.event_source
                 self._httpd = httpd
                 self.port = p
                 break

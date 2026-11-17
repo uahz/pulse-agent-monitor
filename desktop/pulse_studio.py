@@ -33,6 +33,10 @@ from pulse_glass import (
     paint_soft_shadow, draw_ring, draw_bar, _c, _global_pos,
 )
 from pulse_pair_server import PairServer, open_pair_dialog, save_qr_png
+from pulse_events import (
+    EventEngine, FileEventSource, ReplayEventSource, HttpEventSource,
+    EV_TASK_STARTED, EV_TASK_COMPLETED, EV_TASK_FAILED,
+)
 
 from PySide6.QtCore import (
     Qt, QRectF, QPointF, QSize, QTimer, Signal, QPropertyAnimation, QEasingCurve,
@@ -989,7 +993,7 @@ class AlertsPage(QWidget):
 
 # ---------------------------------------------------------------- 主窗口
 class StudioWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, source=None, source_speed=1.0):
         super().__init__()
         self.setWindowTitle("%s · %s" % (APP_NAME, APP_SUB))
         self.setWindowFlags(Qt.FramelessWindowHint)
@@ -1003,9 +1007,14 @@ class StudioWindow(QMainWindow):
         self.global_logs = []
         self._drag = None
         self._maximized = False
+        self._needs_rebuild = False
 
-        # 局域网只读配对服务（保留上一轮验证过的链路）
+        # 局域网只读配对服务（先创建：http 事件模式需要向其注入事件源）
         self.pair = PairServer()
+        # 数据驱动引擎：默认本地模拟（与 v2.0.0 行为一致）；--source 指定时事件驱动
+        self.engine = None
+        self.engine_desc = "本地模拟（random 推进）"
+        self._build_engine(source, source_speed)
         self.pair.start()
         self.pair.publish(self.tasks)
 
@@ -1031,6 +1040,65 @@ class StudioWindow(QMainWindow):
     def showEvent(self, e):
         super().showEvent(e)
         QTimer.singleShot(0, self._apply_cards)
+
+    # ------------------------------------------------------------ 数据驱动引擎
+    def _build_engine(self, source, speed):
+        """按 --source 构建事件引擎；缺省保持本地模拟（向后兼容）。"""
+        if not source:
+            self.engine = EventEngine(
+                self.tasks, source=None, simulate=True,
+                on_event=self._on_engine_event)
+            return
+        if source == "none":
+            self.engine = EventEngine(
+                self.tasks, source=None, simulate=False,
+                on_event=self._on_engine_event)
+            self.engine_desc = "冻结模式（--source none，不推进）"
+            return
+        if source == "http":
+            src = HttpEventSource()
+            self.engine = EventEngine(
+                self.tasks, source=src, simulate=True,
+                on_event=self._on_engine_event,
+                on_task_added=self._on_task_added)
+            self.pair.set_event_source(src)
+            self.engine_desc = "HTTP 事件推送（POST /api/events，token 鉴权）"
+            return
+        if source.startswith("file:"):
+            path = source[5:]
+            src = FileEventSource(path)
+            self.engine = EventEngine(
+                self.tasks, source=src, simulate=True,
+                on_event=self._on_engine_event,
+                on_task_added=self._on_task_added)
+            self.engine_desc = "事件文件跟随（%s）" % os.path.basename(path)
+            return
+        if source.startswith("replay:"):
+            path = source[7:]
+            src = ReplayEventSource(path, speed=speed)
+            self.engine = EventEngine(
+                self.tasks, source=src, simulate=True,
+                on_event=self._on_engine_event,
+                on_task_added=self._on_task_added)
+            self.engine_desc = "事件回放（%s · %.1fx）" % (os.path.basename(path), speed)
+            return
+        raise ValueError("--source 仅支持 none / http / file:路径 / replay:路径")
+
+    def _on_task_added(self, task):
+        self._needs_rebuild = True
+
+    def _on_engine_event(self, etype, task):
+        """引擎事件 → 全局日志页（与 v2.0.0 模拟模式的日志口径一致）。"""
+        line = now_str()
+        if etype in ("sim_done", EV_TASK_COMPLETED):
+            self.logs_page.append(line, "ok", task.agent, "%s 完成" % task.id)
+        elif etype in ("sim_start", EV_TASK_STARTED):
+            self.logs_page.append(line, "run", task.agent, "%s 开始执行" % task.id)
+        elif etype == "sim_progress":
+            self.logs_page.append(line, "run", task.agent,
+                                  "%s 进度 %d%%" % (task.id, task.progress))
+        elif etype == EV_TASK_FAILED:
+            self.logs_page.append(line, "error", task.agent, "%s 失败" % task.id)
 
     # ------------------------------------------------------------ UI 构建
     def _build_ui(self):
@@ -1256,36 +1324,13 @@ class StudioWindow(QMainWindow):
     def tick(self, force=False):
         if not self.live and not force:
             return
-        changed = False
-        for t in self.tasks:
-            if t.status == "running":
-                step = random.randint(1, 4) if not force else 1
-                t.progress = min(100, t.progress + step)
-                t.elapsed += 2
-                t.tokens += random.randint(120, 640)
-                t.updated = now_str()
-                done_n = round(len(t.steps) * t.progress / 100)
-                t.steps = [(s, "done" if j < done_n else ("active" if j == done_n else "todo"))
-                           for j, (s, _) in enumerate(t.steps)]
-                if t.progress >= 100:
-                    t.status = "done"
-                    t.add_log("ok", "全部步骤完成，结果已归档")
-                    self.logs_page.append(now_str(), "ok", t.agent, "%s 完成" % t.id)
-                elif random.random() < 0.28:
-                    t.add_log("run", "步骤推进至 %d%%，已处理 %s tokens" %
-                              (t.progress, fmt_tokens(t.tokens)))
-                    self.logs_page.append(now_str(), "run", t.agent,
-                                         "%s 进度 %d%%" % (t.id, t.progress))
-                changed = True
-            elif t.status == "queued" and random.random() < 0.12:
-                t.status = "running"
-                t.add_log("run", "任务出队，开始执行")
-                self.logs_page.append(now_str(), "run", t.agent, "%s 开始执行" % t.id)
-                changed = True
-            elif t.status == "review" and random.random() < 0.05:
-                t.status = "running"
-                t.add_log("run", "人工确认通过，继续执行")
-                changed = True
+        # 事件模式：消费事件源；模拟模式：engine 内置原 random 推进（行为不变）
+        changed = bool(self.engine.step()) if self.engine else False
+        if self._needs_rebuild:
+            self._needs_rebuild = False
+            self.workbench.rebuild_cards(self.tasks)
+            self._apply_cards()
+            changed = True
         if changed or force:
             self.refresh_all()
 
@@ -1414,12 +1459,19 @@ def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(QSS)
     load_fonts()
-    win = StudioWindow()
-    win.show()
     argv = sys.argv
 
     def arg(name, default=None):
         return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else default
+
+    # P0：数据驱动 --source none|http|file:路径|replay:路径（缺省本地模拟）
+    source_spec = arg("--source")
+    try:
+        source_speed = float(arg("--source-speed", "1.0"))
+    except ValueError:
+        source_speed = 1.0
+    win = StudioWindow(source=source_spec, source_speed=source_speed)
+    win.show()
 
     if "--pair-info" in argv:
         import json
@@ -1427,6 +1479,7 @@ def main():
             "version": APP_VER, "host": win.pair.host, "port": win.pair.port,
             "token": win.pair.state.token, "url": win.pair.url(),
             "health_url": win.pair.health_url(), "error": win.pair.error,
+            "engine": win.engine_desc,
         }
         try:
             with open(arg("--pair-info", "/tmp/pulse_pair_info.json"), "w", encoding="utf-8") as f:

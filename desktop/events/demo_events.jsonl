@@ -1,0 +1,18 @@
+{"t": 0, "type": "task_started", "task_id": "AGT-2001", "name": "季度数据治理流水线", "agent": "Orchestrator", "model": "GPT-4o", "priority": "高", "steps": ["扫描数据源", "校验数据质量", "生成治理报告"]}
+{"t": 1, "type": "log", "task_id": "AGT-2001", "level": "info", "text": "事件源接入成功，流水线启动"}
+{"t": 2, "type": "step_completed", "task_id": "AGT-2001", "step_index": 0}
+{"t": 3, "type": "tokens", "task_id": "AGT-2001", "delta": 15230}
+{"t": 4, "type": "task_paused", "task_id": "AGT-1034", "reason": "压测机维护窗口"}
+{"t": 5, "type": "log", "task_id": "AGT-1039", "level": "error", "text": "推送重试第 3 次仍超时"}
+{"t": 6, "type": "task_resumed", "task_id": "AGT-1034"}
+{"t": 7, "type": "step_completed", "task_id": "AGT-1042", "step_index": 5}
+{"t": 8, "type": "tokens", "task_id": "AGT-1042", "delta": 8420}
+{"t": 9, "type": "task_review", "task_id": "AGT-1033"}
+{"t": 10, "type": "step_completed", "task_id": "AGT-2001", "step_index": 1}
+{"t": 11, "type": "task_progress", "task_id": "AGT-1041", "progress": 66}
+{"t": 12, "type": "log", "task_id": "AGT-1041", "level": "run", "text": "断点续传压测通过"}
+{"t": 13, "type": "task_failed", "task_id": "AGT-1039", "reason": "推送网关证书过期"}
+{"t": 14, "type": "step_completed", "task_id": "AGT-1037", "step_index": 2}
+{"t": 15, "type": "task_completed", "task_id": "AGT-2001"}
+{"t": 16, "type": "tokens", "task_id": "AGT-2001", "delta": 3200}
+{"t": 17, "type": "log", "task_id": "AGT-2001", "level": "ok", "text": "治理流水线全部产出归档"}

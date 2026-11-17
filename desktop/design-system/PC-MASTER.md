@@ -212,3 +212,65 @@ Qt Widgets 无原生 `backdrop-filter`，用 `QPainter` 分层合成：
 - 数据仍为本地 `seed_tasks()` + `random` 推进（两端独立、未接真实后端）——延续上一轮 P0 数据契约结论
 - 移动端 v1.4.0 已完成扫码（内联 jsQR，非 ZXing）、「项目」页数据映射、断线回退与手动输入兜底；PC 端本文件描述的配对服务作为其数据源，`PAIR_VERSION` 保持 1.3.0 以维持接口契约稳定
 - 仍需真机验收：CAMERA 运行时授权 / 后置摄像头取帧 / 多机型 WebView 对 `file://` 下 `getUserMedia` 的兼容性；Windows exe 打包与任务栏/多显示器行为确认
+
+---
+
+## 10. v2.1.0（P0 数据真实化）：random 模拟 → 事件驱动引擎
+
+> 目标：消除「数据全靠 `seed_tasks()` + `random` 推进」这一最大缺口，让 PC 端可接入真实 Agent 事件源；`/api/tasks` 契约不变，移动端 v1.4.0 无需改动即自动吃到真实数据。
+
+### 10.1 架构
+
+```
+真实 Agent ──┬── JSONL 文件 ────→ FileEventSource（tail 跟随）
+             ├── HTTP POST ─────→ HttpEventSource（POST /api/events，token 鉴权）
+             └── 录制/回放 ─────→ ReplayEventSource（时间轴 × 倍速，可复现）
+                        ↓ poll()
+                  EventEngine（事件 → 任务状态机，就地修改共享 tasks 列表）
+                        ↓ 每 2s tick
+                  StudioWindow.refresh_all()（UI / 悬浮窗 / 配对快照零改动）
+```
+
+### 10.2 事件模型（10 类）
+
+| 事件 | 语义 | 状态机效果 |
+|---|---|---|
+| `task_started` | 新建或重启 | 新任务 append（首步 active）；终态任务清零重跑 |
+| `step_completed` | 完成某步 | 按索引（或首个 active/todo）置 done，下一个置 active，进度按完成数重算 |
+| `task_progress` | 直报进度 | progress 设置 + 步骤四态按百分比同步 |
+| `task_paused / resumed / review` | 状态流转 | paused/running/review；done/failed 终态拒绝流转 |
+| `task_failed` | 失败 | failed + reason 写 error 日志 + active→blocked |
+| `task_completed` | 完成 | done + 100% + 全步骤 done |
+| `log` | 追加日志 | level 归一化（非法→info），任务日志 60 条截断 |
+| `tokens` | 用量增量 | 只累计正 delta |
+
+容错：未知 `task_id` 记录到 `unknown_ids` 不崩溃；坏 JSON/未知 type 计数跳过；HTTP 队列上限 512 满时丢最旧。
+
+### 10.3 接入方式（CLI）
+
+```bash
+python3.12 pulse_studio.py                          # 默认：本地模拟（行为与 2.0.0 一致）
+python3.12 pulse_studio.py --source none            # 冻结模式（不推进）
+python3.12 pulse_studio.py --source replay:events/demo_events.jsonl --source-speed 30
+python3.12 pulse_studio.py --source file:/path/agent_events.jsonl
+python3.12 pulse_studio.py --source http            # 开放 POST /api/events
+```
+
+`POST /api/events?token=...`（或 `X-Pulse-Token` 头）接受单事件或 `{"events": [...]}` 批量（≤256 条、body ≤256KB）；仅 `--source http` 模式开放，其余模式返回 404，/api/tasks 与 /api/health 契约不变。
+
+### 10.4 文件与验证
+
+| 项 | 内容 |
+|---|---|
+| `pulse_events.py` | 事件模型 + 三事件源 + `EventEngine` 状态机（纯 Python 无 Qt 依赖） |
+| `events/demo_events.jsonl` | 18 条录制事件流，覆盖全部 10 类事件、多任务交错 |
+| `verify_events.py` | **42 项**：A 区 26 项引擎单元（状态机/容错/三源行为）+ B 区 16 项集成（replay/file/http 接入主程序、卡片重建、全局日志、快照、POST 通道鉴权/坏包/批量、默认模拟回归） |
+| 回归 | `verify_studio` 30/30、`verify_pair` 22/22、`verify_link` 32/32 全部通过，零回归 |
+| 打包 | v2.1.0 单文件 `dist/PULSE_Agent_Studio` 脱离源码独立启动成功，`--source replay` 模式在打包产物内验证通过，产物含 `pulse_events` |
+
+### 10.5 已知限制 / 下一步（P1）
+
+- 引擎仍保留模拟分支（`simulate=True` 默认）作为无事件源时的兜底；接入真实 agent 后建议显式 `--source` 启动
+- 同步仍是手机 2s 轮询拉取，未做 SSE/WebSocket 推送（P1）
+- token 每次启动重新生成，PC 重启后手机需重新配对（P1：token 持久化）
+- `task_progress` 与 `step_completed` 双通道写同一进度，外部 agent 应二选一使用，避免抖动
