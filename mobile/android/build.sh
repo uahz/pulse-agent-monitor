@@ -10,23 +10,11 @@ SDK="${ANDROID_HOME:-/opt/android-sdk}"
 BT="$SDK/build-tools/35.0.0"
 PLATFORM="$SDK/platforms/android-35/android.jar"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-# 仓库结构：mobile/android/build.sh，页面源码在 mobile/index.html 与 mobile/fonts/
-WEB="$ROOT/.."
+WEB="$ROOT/../web"
 OUT="$ROOT/build"
-# 预编译签名包放在仓库 releases/；可用 PULSE_APK_OUT 覆盖输出位置
-APK="${PULSE_APK_OUT:-$ROOT/../../releases/PULSE_v1.4.0.apk}"
-# 演示签名：keystore 与口令均为本地生成、不入库（.gitignore）。
-# 口令优先取环境变量；否则沿用本地缓存；首次构建自动生成随机口令。
-KS_PASS_FILE="$ROOT/.keystore.pass"
-if [ -n "${PULSE_KS_PASS:-}" ]; then
-  KS_PASS="$PULSE_KS_PASS"
-elif [ -f "$KS_PASS_FILE" ]; then
-  KS_PASS="$(cat "$KS_PASS_FILE")"
-else
-  KS_PASS="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"
-  printf '%s' "$KS_PASS" > "$KS_PASS_FILE"
-  chmod 600 "$KS_PASS_FILE"
-fi
+APK="$ROOT/../../PULSE_v1.5.0.apk"
+# 演示用签名口令：可用环境变量覆盖；pulse.keystore 为本地私钥，不纳入版本库（.gitignore）
+KS_PASS="${PULSE_KS_PASS:-pulse2026}"
 
 for p in "$BT/aapt2" "$BT/d8" "$BT/zipalign" "$BT/apksigner" "$PLATFORM"; do
   [ -e "$p" ] || { echo "缺少构建工具: $p"; exit 1; }
@@ -51,7 +39,7 @@ echo "[2/8] 链接资源并生成 R.java (aapt2 link)"
   -A "$ROOT/assets" \
   -0 woff2 \
   --min-sdk-version 24 --target-sdk-version 35 \
-  --version-code 10 --version-name 1.4.0 \
+  --version-code 11 --version-name 1.5.0 \
   "${FLATS[@]}"
 
 echo "[3/8] 编译 Java 源码 (javac)"

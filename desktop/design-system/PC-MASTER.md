@@ -274,3 +274,38 @@ python3.12 pulse_studio.py --source http            # 开放 POST /api/events
 - 同步仍是手机 2s 轮询拉取，未做 SSE/WebSocket 推送（P1）
 - token 每次启动重新生成，PC 重启后手机需重新配对（P1：token 持久化）
 - `task_progress` 与 `step_completed` 双通道写同一进度，外部 agent 应二选一使用，避免抖动
+
+---
+
+## 11. v2.1.0（P1 链路升级）：token 持久化 + 长轮询 + SSE
+
+> 目标：PC 重启免重新扫码；进度变化准实时推达手机；断线退避与自动恢复。`/api/tasks` 契约与 `PAIR_VERSION=1.3.0` 不变（向后兼容扩展），移动端 v1.4.0 继续可用。
+
+### 11.1 服务端新增
+
+| 端点/机制 | 说明 |
+|---|---|
+| token 持久化 | `~/.pulse/pair_token`（600 权限）；启动复用，损坏自动重生成；无法落盘时退化一次性 token |
+| `GET /api/poll?token&rev=N` | 长轮询：rev 过期立即 200（含新 rev）；未变化挂起 `poll_hold`（默认 8s，可参数化）超时 204；`publish()` 时 Condition 唤醒全部挂起连接 |
+| `GET /api/stream?token` | SSE：连接即推当前快照，之后每次变化推 `event: tasks`；空闲 10s 心跳注释行（周期可参数化）；客户端断开静默清理；`stop_event` 保证停机不挂死 |
+| health | endpoints 增列 `/api/poll` `/api/stream`（`/api/events` 仍仅 http 事件模式） |
+
+线程模型：HTTP 线程只读不可变快照字符串与 `Condition`，不接触 Task 对象——沿用既有「主线程 publish 序列化、HTTP 线程只读」的竞态防线。
+
+### 11.2 移动端配合（v1.5.0）
+
+- `MainActivity.httpGetT(url, timeoutMs)`：读超时参数化（默认 15s 覆盖长轮询挂起），旧 `httpGet` 兼容保留
+- Web 层 `PulseLink`：首轮 `/api/tasks` 全量 → `/api/poll?rev=N` 长轮询（204 空体立即下一轮）；失败 1/2/4/8/15/30s 指数退避，成功重置；连续失败仍由上层 `linkFailCount>=2` 语义断线回退
+- **修复真 Bug**：`dropRemote` 断线回退后 rev 未清零 → 服务端无变化时永远 204 → 远端视图无法自动恢复、界面卡「连接失败」、「断开」按钮禁用、后台空转。修复：回退时 `PulseLink.rev=0`，下一轮全量同步自动恢复
+
+### 11.3 验证（五套全绿）
+
+- `verify_p1.py` **28/28**（新）：A 区 18 项服务端（token 持久化/复用/损坏重生成；poll 立即返回 / hold 唤醒 <0.8s / 超时 204 / 鉴权 / 坏 rev；SSE 初始推送 / 变化推送 / 心跳 / 断开清理 / 鉴权 / stop 不挂死）+ B 区 10 项移动端（Chromium + fetch 拦截桥：首轮全量、poll 切换与 rev 递增、204 节奏 ≈ hold、退避 1s→2s 递增、成功重置、断开零新请求、回退语义不回归）
+- 回归：`verify_link` 32/32（更新到 v1.5.0 页面）、`verify_events` 42/42、`verify_studio` 30/30、`verify_pair` 22/22
+- 打包：`dist/PULSE_Agent_Studio` 脱离源码独立启动，**两次启动 token 复用**（持久化在产物内生效）；APK `PULSE_v1.5.0.apk`（versionCode=11）v2/v3 验签通过
+
+### 11.4 已知限制 / 下一步（P2）
+
+- 长轮询延迟上限 = `poll_hold`(8s) + 退避；SSE 已就绪但 Android WebView `EventSource` 在 `file://` 下兼容性不确定，暂不启用
+- token 持久化后取消「一次性 token」的会话隔离——安全性依赖局域网边界与 600 权限文件；如需撤销配对，删除 token 文件并重启
+- P2 待办：Android 真机清单（CAMERA / WebView 兼容）、Windows exe、悬浮窗多显示器、GitHub Actions CI 自动发版

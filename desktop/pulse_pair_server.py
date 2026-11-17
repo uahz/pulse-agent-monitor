@@ -12,9 +12,12 @@ PULSE · 局域网配对服务（PC 端）
 HTTP 线程只读该字符串，不接触任何 Task 对象，避免与 QTimer 的 tick() 产生竞态。
 """
 import json
+import os
+import re
 import secrets
 import socket
 import threading
+import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -28,11 +31,34 @@ from PySide6.QtWidgets import (
 API_PATH = "/api/tasks"
 HEALTH_PATH = "/api/health"
 EVENTS_PATH = "/api/events"   # P0：POST 推送 Agent 事件（仅 http 事件模式启用）
+POLL_PATH = "/api/poll"       # P1：长轮询（rev 变化即返回，未变化挂起至 hold 超时）
+STREAM_PATH = "/api/stream"   # P1：SSE 实时推送
 DEFAULT_PORT = 8765
 # 配对协议版本（HTTP 接口契约），与 PC 应用 UI 版本 APP_VER 解耦：
-# 自 v1.3.0 引入后接口字段未变，故保持 1.3.0 以保证移动端 v1.4.0 与旧版兼容。
-# 若修改 /api/tasks 响应结构，必须同步提升此值与两端解析逻辑。
+# 自 v1.3.0 引入后 /api/tasks 响应字段未变；P1 新增 /api/poll 与 /api/stream
+# 为向后兼容扩展，故维持 1.3.0，保证移动端 v1.4.0 与旧版继续可用。
 PAIR_VERSION = "1.3.0"
+
+# token 持久化路径：PC 重启后复用同一 token，手机端已保存的地址无需重新扫码。
+TOKEN_PATH = os.path.join(os.path.expanduser("~"), ".pulse", "pair_token")
+
+
+def load_or_create_token():
+    """读取持久化 token；不存在或损坏时生成新 token 并落盘（600 权限）。"""
+    try:
+        os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
+        if os.path.exists(TOKEN_PATH):
+            with open(TOKEN_PATH, encoding="utf-8") as f:
+                t = f.read().strip()
+            if re.fullmatch(r"[0-9a-f]{8}", t):
+                return t, True  # 复用
+        t = secrets.token_hex(4)
+        with open(TOKEN_PATH, "w", encoding="utf-8") as f:
+            f.write(t)
+        os.chmod(TOKEN_PATH, 0o600)
+        return t, False  # 新生成
+    except OSError:
+        return secrets.token_hex(4), False  # 无法落盘时退化为一次性 token
 
 STATUS_LABEL = {
     "running": "运行中", "queued": "排队中", "review": "待人工确认",
@@ -119,19 +145,33 @@ class PairState:
     """HTTP 线程与 Qt 主线程之间唯一的共享状态。"""
 
     def __init__(self):
-        self.token = secrets.token_hex(4)
+        self.token, self.token_reused = load_or_create_token()
         self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)  # 长轮询唤醒
         self._snapshot = json.dumps({"v": 1, "tasks": [], "summary": {}}, ensure_ascii=False)
         self.requests = 0
+        self.rev = 0  # 快照修订号：publish 一次 +1，长轮询按此判断变化
 
     def publish(self, payload):
         s = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        with self._lock:
+        with self._cond:
             self._snapshot = s
+            self.rev += 1
+            self._cond.notify_all()  # 唤醒所有挂起的 /api/poll
 
     def snapshot(self):
         with self._lock:
             return self._snapshot
+
+    def wait_for_change(self, known_rev, timeout):
+        """长轮询等待：rev 变化返回新快照，超时返回 None。"""
+        with self._cond:
+            if self.rev != known_rev:
+                return self._snapshot
+            self._cond.wait(timeout)
+            if self.rev != known_rev:
+                return self._snapshot
+        return None
 
     def hit(self):
         with self._lock:
@@ -179,7 +219,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "ok": True, "service": "PULSE Pair", "version": PAIR_VERSION,
                 "port": self.server.server_address[1],
                 "token_required": True, "requests": state.requests,
-                "endpoints": [HEALTH_PATH, API_PATH]
+                "endpoints": [HEALTH_PATH, API_PATH, POLL_PATH, STREAM_PATH]
                               + ([EVENTS_PATH] if self.server.event_source else []),
             })
             return
@@ -203,7 +243,84 @@ class _Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
-        self._send_json(404, {"ok": False, "error": "not_found", "endpoints": [HEALTH_PATH, API_PATH]})
+        if u.path == POLL_PATH:
+            self._do_poll(state, parse_qs(u.query))
+            return
+        if u.path == STREAM_PATH:
+            self._do_stream(state, parse_qs(u.query))
+            return
+        self._send_json(404, {"ok": False, "error": "not_found",
+                              "endpoints": [HEALTH_PATH, API_PATH, POLL_PATH, STREAM_PATH]})
+
+    # ---------------- P1：长轮询（rev 变化即返回，未变化挂起） ----------------
+    def _do_poll(self, state, q):
+        token = q.get("token", [""])[0]
+        if not token or not secrets.compare_digest(token, state.token):
+            self._send_json(401, {"ok": False, "error": "invalid_token"})
+            return
+        try:
+            known = int(q.get("rev", ["0"])[0])
+        except ValueError:
+            self._send_json(400, {"ok": False, "error": "bad_rev"})
+            return
+        state.hit()
+        hold = float(getattr(self.server, "poll_hold", 8.0))
+        snap = state.wait_for_change(known, hold)
+        if snap is None:
+            # 无变化：204 空响应（Java 层 2xx 走 _onData，Web 层空 body 视为无变化）
+            self.send_response(204)
+            self._cors()
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        payload = json.loads(snap)
+        payload["rev"] = state.rev
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._cors()
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    # ---------------- P1：SSE 实时推送 ----------------
+    def _do_stream(self, state, q):
+        token = q.get("token", [""])[0]
+        if not token or not secrets.compare_digest(token, state.token):
+            self._send_json(401, {"ok": False, "error": "invalid_token"})
+            return
+        state.hit()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self._cors()
+        self.end_headers()
+        try:
+            # 立即推送当前快照，之后每次变化推送一次，空闲期发心跳注释行
+            self.wfile.write(b": connected\n\n")
+            self.wfile.flush()
+            last = None
+            idle = 0
+            while not self.server.stop_event.is_set():
+                snap = state.snapshot()
+                if snap != last:
+                    self.wfile.write(b"event: tasks\ndata: " + snap.encode("utf-8") + b"\n\n")
+                    self.wfile.flush()
+                    last = snap
+                    idle = 0
+                else:
+                    idle += 1
+                    hb = int(getattr(self.server, "heartbeat_cycles", 20))
+                    if hb > 0 and idle >= hb:  # 0.5s × 20 = 10s 心跳（可参数化）
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                        idle = 0
+                time.sleep(0.5)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # 客户端断开：静默清理，服务不受影响
 
     # ---------------- P0：接收外部 Agent 事件推送 ----------------
     def do_POST(self):
@@ -245,11 +362,14 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class PairServer:
-    def __init__(self, port=DEFAULT_PORT):
+    def __init__(self, port=DEFAULT_PORT, poll_hold=8.0, heartbeat_cycles=20):
         self.state = PairState()
         self.host = get_lan_ip()
         self.port = port
         self.error = ""
+        self.poll_hold = max(1.0, float(poll_hold))  # 长轮询挂起时长（秒）
+        self.heartbeat_cycles = int(heartbeat_cycles)  # SSE 心跳间隔（0.5s 周期数）
+        self.stop_event = threading.Event()
         self._httpd = None
         self._thread = None
         self.event_source = None  # HttpEventSource，仅 http 事件模式下由宿主注入
@@ -266,6 +386,9 @@ class PairServer:
                 httpd.daemon_threads = True
                 httpd.state = self.state
                 httpd.event_source = self.event_source
+                httpd.poll_hold = self.poll_hold
+                httpd.stop_event = self.stop_event
+                httpd.heartbeat_cycles = self.heartbeat_cycles
                 self._httpd = httpd
                 self.port = p
                 break
@@ -296,6 +419,7 @@ class PairServer:
     def stop(self):
         if self._httpd is None:
             return
+        self.stop_event.set()  # 通知 SSE 循环退出
         try:
             self._httpd.shutdown()
             self._httpd.server_close()

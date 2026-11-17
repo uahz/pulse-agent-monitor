@@ -575,7 +575,7 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
 
 
 /* =========================================================
-   v1.4.0 · 扫码连接 PC / 远端 Agent 任务渲染
+   v1.5.0 · 长轮询连接 PC / 远端 Agent 任务渲染
    仅新增规则，不覆盖任何既有样式（tab bar / 顶栏材质保持原样）
    ========================================================= */
 .link-entry{width:100%;display:flex;align-items:center;gap:12px;padding:15px var(--space-md);border-radius:16px;background:linear-gradient(150deg,#1E2D48,#1A2740);border:1px solid var(--border);color:var(--color-text);cursor:pointer;text-align:left}
@@ -696,7 +696,7 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
       <svg class="icon icon-sm" id="autoIcon"><use href="#i-pause"/></svg>
       <span id="autoLabel">自动刷新 30s</span>
     </button>
-    <span class="ver-tag" title="当前构建版本">v1.4.0</span>
+    <span class="ver-tag" title="当前构建版本">v1.5.0</span>
   </div>
 
   <!-- ===================== 视图容器 ===================== -->
@@ -799,7 +799,7 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
       <div class="section-head"><h2>团队动态</h2></div>
       <article class="card timeline" id="timeline"></article>
 
-      <p class="footnote" id="overviewFootnote">PULSE v1.4.0 · 本地离线演示数据 · 由 UI/UX Pro Max 设计系统驱动</p>
+      <p class="footnote" id="overviewFootnote">PULSE v1.5.0 · 本地离线演示数据 · 由 UI/UX Pro Max 设计系统驱动</p>
     </section>
 
     <!-- ---------- 项目 ---------- -->
@@ -874,7 +874,7 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
 
       <div class="section-head"><h2>关于</h2></div>
       <article class="card about-card">
-        <div class="about-row"><span>应用版本</span><strong id="appVersion">1.4.0</strong></div>
+        <div class="about-row"><span>应用版本</span><strong id="appVersion">1.5.0</strong></div>
         <div class="about-row"><span>设计系统</span><strong>UI/UX Pro Max</strong></div>
         <div class="about-row"><span>视觉风格</span><strong>Dark · Bento Grid</strong></div>
         <div class="about-row"><span>字体</span><strong>Fira Code / Fira Sans</strong></div>
@@ -1142,6 +1142,9 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
     REMOTE.projects = [];
     REMOTE.summary = null;
     if (reason) REMOTE.lastError = reason;
+    // v1.5.0 修复：断线回退后清零长轮询 rev，强制下一轮 /api/poll 全量返回，
+    // 否则服务端无变化时永远 204，远端视图无法自动恢复（界面卡在"连接失败"）。
+    try { if (window.PulseLink) window.PulseLink.rev = 0; } catch (e) {}
   }
 
   /* ---------------- 状态 ---------------- */
@@ -1296,8 +1299,8 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
     }).join('');
 
     $('overviewFootnote').textContent = REMOTE.active
-      ? 'PULSE v1.4.0 · 项目数据来自 PC 实时快照 · 趋势 / 预警 / 团队动态为本地演示'
-      : 'PULSE v1.4.0 · 本地离线演示数据 · 由 UI/UX Pro Max 设计系统驱动';
+      ? 'PULSE v1.5.0 · 项目数据来自 PC 实时快照 · 趋势 / 预警 / 团队动态为本地演示'
+      : 'PULSE v1.5.0 · 本地离线演示数据 · 由 UI/UX Pro Max 设计系统驱动';
     updateTabBadge(s.open);
   }
 
@@ -1728,18 +1731,24 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
   };
 
   /* ---------------- 局域网配对（PulseLink） ----------------
-     v1.4.0：由「连接 PC」面板驱动，数据到达后映射到项目视图。
-     - 优先走 NativeBridge.httpGet（绕开 file:// 跨域 / 明文限制）
-     - 浏览器预览环境降级为 fetch（PC 服务已允许 CORS）
-     - Java 层回调 _onData(jsonText) / _onError(message)
-     - 通道本身不直接改 DOM，只发 data / error / status 事件
+     v1.5.0：长轮询 + 指数退避。
+     - 首轮 GET /api/tasks 全量取数（契约与 v1.4.0 一致）
+     - 之后 GET /api/poll?rev=N：服务端快照变化立即返回（含 rev），
+       未变化挂起至 8s 超时返回 204（空 body → 立即下一轮）
+     - 失败按 1/2/4/8/15/30s 指数退避，成功重置；连续失败由上层
+       linkFailCount>=2 语义断线回退，本层只负责节奏
+     - 优先走 NativeBridge.httpGetT(url, 15000)（v1.5.0 新桥，超时覆盖挂起），
+       旧桥 httpGet 兼容；浏览器预览降级为 fetch（PC 服务已允许 CORS）
      -------------------------------------------------------- */
   window.PulseLink = (function () {
     var listeners = { data: [], error: [], status: [] };
-    var timer = null;
+    var pollTimer = null;
+    var failStreak = 0;
+    var BACKOFF = [1000, 2000, 4000, 8000, 15000, 30000];
     var api = {
-      version: '1.4.0',
+      version: '1.5.0',
       url: '',
+      rev: 0,
       connected: false,
       lastData: null,
       lastError: null,
@@ -1755,10 +1764,14 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
       api.connected = connected;
       emit('status', { connected: connected, message: msg || '', at: new Date().toISOString() });
     }
-    function request(url) {
+    function request(url, timeoutMs) {
       if (!url) { api._onError('缺少地址'); return; }
       if (window.Android && window.Android.httpGet) {
-        try { window.Android.httpGet(url); return; }
+        try {
+          if (window.Android.httpGetT) window.Android.httpGetT(url, timeoutMs || 15000);
+          else window.Android.httpGet(url);
+          return;
+        }
         catch (e) { api._onError('原生桥不可用：' + e); return; }
       }
       // 浏览器预览降级路径
@@ -1774,19 +1787,32 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
         api._onError('当前环境无可用网络通道');
       }
     }
+    /* 把 /api/tasks 地址换成 /api/poll 长轮询地址（非标准地址原样轮询） */
+    function pollUrl() {
+      var u = (api.url || '').replace('/api/tasks', '/api/poll');
+      if (u === api.url || !u) return api.url;
+      return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'rev=' + api.rev;
+    }
+    function schedulePoll(delay) {
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(function () { request(pollUrl(), 15000); }, delay);
+    }
 
     api.get = function (url) { request(url || api.url); };
     api.connect = function (url, intervalMs) {
       api.disconnect();
       api.url = url || api.url;
+      api.rev = 0;
+      failStreak = 0;
       if (!api.url) { api._onError('缺少配对地址'); return false; }
+      api.polling = true;
       setStatus(false, '正在连接 ' + api.url);
-      request(api.url);
-      timer = setInterval(function () { request(api.url); }, Math.max(1000, intervalMs || 2000));
+      request(api.url);   // 首轮全量；之后由 _onData/_onError 调度长轮询
       return true;
     };
     api.disconnect = function () {
-      if (timer) { clearInterval(timer); timer = null; }
+      api.polling = false;
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
       if (api.connected || api.url) setStatus(false, '已断开');
     };
     api.on = function (type, fn) {
@@ -1798,27 +1824,37 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
                lastSync: api.lastSync, lastError: api.lastError,
                hasNativeBridge: !!(window.Android && window.Android.httpGet) };
     };
-    /* 由 MainActivity 的 httpGet 通过 evaluateJavascript 回调 */
+    /* 由 MainActivity 的 httpGet/httpGetT 通过 evaluateJavascript 回调 */
     api._onData = function (txt) {
+      if (!txt) {   // 204 无变化：立即进入下一轮长轮询
+        if (api.polling) schedulePoll(0);
+        return;
+      }
       var data;
       try { data = JSON.parse(txt); }
       catch (e) { api._onError('JSON 解析失败'); return; }
+      if (typeof data.rev === 'number') api.rev = data.rev;
       api.lastData = data;
       api.lastError = null;
       api.lastSync = new Date().toISOString();
+      failStreak = 0;
       if (!api.connected) setStatus(true, '已连接 PC');
       emit('data', data);
+      if (api.polling) schedulePoll(0);
     };
     api._onError = function (msg) {
       api.lastError = String(msg || '请求失败');
       api.connected = false;
+      var delay = BACKOFF[Math.min(failStreak, BACKOFF.length - 1)];
+      failStreak++;
+      if (api.polling) schedulePoll(delay);
       emit('error', api.lastError);
       emit('status', { connected: false, message: api.lastError, at: new Date().toISOString() });
     };
     return api;
   })();
 
-  /* ---------------- 扫码连接 PC（v1.4.0） ----------------
+  /* ---------------- 扫码连接 PC（v1.4.0 起，v1.5.0 长轮询） ----------------
      主路径：相机扫码（内联 jsQR）；必备兜底：手动输入 IP:端口 + token。
      相机在任何机型不可用时都只是退化，连接能力不会丢失、界面不会白屏。 */
   var scan = { stream: null, timer: null, on: false };

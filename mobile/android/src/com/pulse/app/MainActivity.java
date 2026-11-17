@@ -148,7 +148,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String getVersion() {
-            return "1.4.0";
+            return "1.5.0";
         }
 
         /**
@@ -156,9 +156,20 @@ public class MainActivity extends Activity {
          * 在子线程执行网络请求，结果通过 evaluateJavascript 回到主线程 Web 层，
          * 从而绕开 file:// 页面的跨域与明文流量限制。
          * 成功回调 window.PulseLink._onData(jsonText)，失败回调 _onError(message)。
+         * v1.5.0：readTimeout 提升到 15s 以支持 /api/poll 长轮询挂起（默认 8s）。
          */
         @JavascriptInterface
         public void httpGet(final String url) {
+            httpGetT(url, 15000);
+        }
+
+        /**
+         * 带读超时的版本：长轮询（PulseLink poll 模式）传 15000，
+         * 普通 GET 传更短超时。参数来自 JS 层，需防御非法值。
+         */
+        @JavascriptInterface
+        public void httpGetT(final String url, final int timeoutMs) {
+            final int timeout = (timeoutMs >= 1000 && timeoutMs <= 60000) ? timeoutMs : 15000;
             new Thread(new Runnable() {
                 @Override
                 public void run() {
@@ -167,8 +178,8 @@ public class MainActivity extends Activity {
                         URL u = new URL(url);
                         conn = (HttpURLConnection) u.openConnection();
                         conn.setRequestMethod("GET");
-                        conn.setConnectTimeout(4000);
-                        conn.setReadTimeout(6000);
+                        conn.setConnectTimeout(Math.min(6000, timeout));
+                        conn.setReadTimeout(timeout);
                         conn.setRequestProperty("Accept", "application/json");
                         int code = conn.getResponseCode();
                         InputStream in = (code >= 200 && code < 300)
