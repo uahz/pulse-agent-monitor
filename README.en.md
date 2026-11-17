@@ -14,8 +14,8 @@ One window on the PC: a pairing QR code is built right into the app and Agent ta
 
 ## Quick Start
 
-1. **PC**: download the single-file binary from [Releases](../../releases) and run it — the QR code shows right in the window
-2. **Android**: install the APK from Releases
+1. **PC (Windows)**: download `PULSE_Desktop.exe` from [Releases](../../releases) and double-click to run — the QR code shows right in the window
+2. **Android**: install `PULSE_v1.6.0.apk` from Releases
 3. Tap "Connect PC" in the app and scan (or enter address + token manually)
 
 ## Run / Build from Source
@@ -25,7 +25,8 @@ One window on the PC: a pairing QR code is built right into the app and Agent ta
 python desktop/pulse_desktop.py
 
 # Package the PC binary
-bash desktop/build_linux.sh          # dist/PULSE_Desktop (Windows: build_exe.bat)
+bash desktop/build_linux.sh          # Linux: dist/PULSE_Desktop
+desktop/build_exe.bat                # Windows: dist\PULSE_Desktop.exe
 
 # Android APK (requires Android SDK 35)
 bash mobile/android/build.sh         # releases/PULSE_v1.6.0.apk

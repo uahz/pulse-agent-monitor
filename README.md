@@ -14,8 +14,8 @@ PC 端一个窗口搞定：启动即内嵌显示配对二维码，实时列出 A
 
 ## 快速开始
 
-1. **PC**：从 [Releases](../../releases) 下载单文件程序运行——二维码直接显示在窗口里
-2. **Android**：下载 APK 安装
+1. **PC（Windows）**：从 [Releases](../../releases) 下载 `PULSE_Desktop.exe`，双击运行——二维码直接显示在窗口里
+2. **Android**：下载 `PULSE_v1.6.0.apk` 安装
 3. 手机端「连接 PC」扫码（或手动输入地址 + token），即连即看
 
 ## 从源码运行 / 构建
@@ -25,7 +25,8 @@ PC 端一个窗口搞定：启动即内嵌显示配对二维码，实时列出 A
 python desktop/pulse_desktop.py
 
 # 打包 PC 单文件
-bash desktop/build_linux.sh          # 产物 dist/PULSE_Desktop（Windows 用 build_exe.bat）
+bash desktop/build_linux.sh          # Linux: dist/PULSE_Desktop
+desktop/build_exe.bat                # Windows: dist\PULSE_Desktop.exe
 
 # Android APK（需 Android SDK 35）
 bash mobile/android/build.sh         # 产物 releases/PULSE_v1.6.0.apk
