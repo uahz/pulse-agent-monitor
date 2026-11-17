@@ -82,6 +82,8 @@ app = QApplication(sys.argv)
 from pulse_studio import StudioWindow
 
 win = StudioWindow()
+win.live = False
+win.engine.simulate = False  # 冻结模拟推进（random），断言基于确定状态；tick(force=True) 仍消费命令
 app.processEvents()
 PORT = win.pair.port
 TOKEN = win.pair.token if hasattr(win.pair, "token") else win.pair.state.token
@@ -103,7 +105,7 @@ tid_queued = next(t.id for t in win.tasks if t.status == "queued")
 
 # A1 暂停 running → tick → 快照 paused
 code, body = post(PORT, "/api/command", {"task_id": tid_running, "action": "pause"}, TOKEN)
-win.tick()
+win.tick(force=True)
 app.processEvents()
 st, _ = snap_status(tid_running)
 check("A1 暂停运行中任务（回执 accepted=1 → 快照 paused）",
@@ -111,14 +113,14 @@ check("A1 暂停运行中任务（回执 accepted=1 → 快照 paused）",
 
 # A2 恢复
 code, body = post(PORT, "/api/command", {"task_id": tid_running, "action": "resume"}, TOKEN)
-win.tick()
+win.tick(force=True)
 app.processEvents()
 st, _ = snap_status(tid_running)
 check("A2 恢复已暂停任务 → running", body.get("accepted") == 1 and st == "running", st)
 
 # A3 重试 failed → running + progress 0
 code, body = post(PORT, "/api/command", {"task_id": tid_failed, "action": "retry"}, TOKEN)
-win.tick()
+win.tick(force=True)
 app.processEvents()
 st, prog = snap_status(tid_failed)
 # 同一 tick 内模拟推进最多 +4%，重试后立即开始推进属预期行为
@@ -128,7 +130,7 @@ check("A3 重试失败任务（从头开始 → running / ≤4%）",
 
 # A4 重试 done → 重新执行
 code, body = post(PORT, "/api/command", {"task_id": tid_done, "action": "retry"}, TOKEN)
-win.tick()
+win.tick(force=True)
 app.processEvents()
 st, prog = snap_status(tid_done)
 check("A4 已完成任务可重新执行",
@@ -161,7 +163,7 @@ code, body = post(PORT, "/api/command", {"commands": [
     {"task_id": tid_running, "action": "pause"},
     {"task_id": tid_r2, "action": "pause"},
 ]}, TOKEN)
-win.tick(); app.processEvents()
+win.tick(force=True); app.processEvents()
 st1, _ = snap_status(tid_running)
 st2, _ = snap_status(tid_r2)
 check("A9 批量命令（两任务同时暂停）",
@@ -188,6 +190,8 @@ win.close()
 # ================================================================ B 区
 print("== B 区：移动端抽屉命令按钮（Chromium）==")
 win2 = StudioWindow()
+win2.live = False
+win2.engine.simulate = False  # 同上：冻结模拟，queued/running 状态不再随机变化
 app.processEvents()
 PORT2 = win2.pair.port
 TOKEN2 = win2.pair.state.token
@@ -310,7 +314,7 @@ toast_txt = ev("var t=document.getElementById('toast'); t ? t.textContent : ''")
 check("B3 命令成功回执 toast", "已提交暂停" in toast_txt, toast_txt)
 
 # B4 PC 端真正应用（tick 后快照 paused）→ 手机刷新后抽屉状态更新
-win2.tick()
+win2.tick(force=True)
 app.processEvents()
 time.sleep(3.0)  # _onCmdResult 调度的 2.5s 后全量刷新
 _d = ev("JSON.stringify({rev: window.PulseLink.rev, sync: window.PulseLink.lastSync, err: window.PulseLink.lastError})")
