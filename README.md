@@ -1,5 +1,7 @@
 # PULSE · 双端 Agent 任务进度监测
 
+![CI](https://github.com/uahz/pulse-agent-monitor/actions/workflows/ci.yml/badge.svg)
+
 > **PULSE** 是一个双端的 Agent 任务进度监测原型：**PC 端**是原生 Qt Widgets 桌面工作台（品牌化玻璃界面 + 液态玻璃悬浮窗），**安卓端**是离线 WebView 应用，通过**扫码或手动输入地址**连接同一局域网的 PC，实时查看 PC 端的 Agent 任务进度。
 
 [English README](README.en.md) · [返回目录](#目录)
@@ -277,12 +279,14 @@ bash build_linux.sh          # Linux: dist/PULSE_Agent_Studio
 
 ## 验证
 
-三套可复跑的验证脚本，发布前已全部通过：
+五套可复跑的验证脚本（共 **154 项断言**），全部通过且已纳入 CI：
 
 | 脚本 | 范围覆盖 | 结果 |
 |---|---|---|
 | `desktop/verify_pair.py` | 服务启动、health、字段契约、token 鉴权（错误/缺失 → 401）、CORS、no-store、404、OPTIONS 204、实时更新、二维码真实解码 | **22 / 22** |
 | `desktop/verify_studio.py` | 四页切换、3 列网格、筛选/搜索、新建任务、tick 推进、悬浮窗开关/折叠/拖拽/减弱动效/实时同步/关闭回写、配对服务可导入 | **30 / 30** |
+| `desktop/verify_events.py` | 事件引擎：10 类事件 → 任务状态机（新建/重启/步骤四态/进度直报/暂停恢复/评审/失败/完成/日志/Tokens）、未知任务与坏行容错、文件跟随/时间轴回放/HTTP 推送三种事件源、接入主程序后的卡片重建与配对快照 | **42 / 42** |
+| `desktop/verify_p1.py` | token 持久化（落盘 600 / 重启复用 / 损坏重生成）、长轮询（rev 立即返回 / hold 唤醒 <0.8s / 超时 204 / 鉴权）、SSE（推送 / 心跳 / 断开清理）、移动端 Chromium：poll 切换、rev 递增、指数退避 1s→2s、断开零新请求、回退自动恢复 | **28 / 28** |
 | `mobile/verify_link.py` | Chromium CDP 加载 APK 内真实 `index.html` + 模拟 `NativeBridge.httpGet` + 请求 **真实 PC 服务**：未连接态、连接后 12 个任务、中文徽章、进度一致、概览完成率、筛选数量、抽屉步骤/日志/只读、sheet 互斥、断线回退、迟到响应抑制、内联 jsQR 解出二维码地址、进度条填充、指标卡零溢出 | **32 / 32** |
 
 ```bash
@@ -291,12 +295,26 @@ cd desktop && python3.12 verify_pair.py
 
 # PC 功能（离屏渲染）
 cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_studio.py
+cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_events.py
+cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_p1.py
 
 # 移动端闭环：需先启动 PC 服务并解出 APK 页面，详见 verify_link.py 顶部注释
 python3.12 mobile/verify_link.py --info <pair_info.json> --qr <qr.png>
 ```
 
-开发/验证依赖见 `desktop/requirements-dev.txt`（`zxingcpp`、`Pillow`、`websocket-client`），另需系统级 Chromium 供 `verify_link.py` 通过 CDP 加载页面。发布前还额外做了：APK v2/v3 验签、`zipalign -c`、`unzip -t`、权限与明文标志核对、内联 JS `node --check`、PC 二进制脱离源码独立启动。
+开发/验证依赖见 `desktop/requirements-dev.txt`（`zxingcpp`、`Pillow`、`websocket-client`），另需系统级 Chromium 供 `verify_p1.py` / `verify_link.py` 的 CDP 驱动。发布前还额外做了：APK v2/v3 验签、`zipalign -c`、`unzip -t`、权限与明文标志核对、内联 JS `node --check`、PC 二进制脱离源码独立启动。
+
+## CI 与自动发版
+
+`.github/workflows/ci.yml` 在每次 push / PR 自动运行，共三个 job：
+
+| Job | 内容 |
+|---|---|
+| `desktop-tests` | 安装 PySide6 / segno / zxing-cpp / websocket-client / pillow，Qt offscreen 依次跑四套 PC 验证（122 项断言） |
+| `android-build` | JDK 17 + Android SDK 35 构建签名 APK，`apksigner verify` / `zipalign -c` / `unzip -t` 检查，上传构建产物 |
+| `release` | 仅当推送 `v*` 标签且上述两个 job 全绿时触发：构建 APK 与 PC 单文件程序（PyInstaller），自动创建 GitHub Release 并上传产物 |
+
+发版流程：`git tag v1.5.0 && git push --tags` 即可——CI 全绿后 Release 与附件自动产出，无需手工上传。
 
 ---
 

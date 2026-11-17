@@ -1,5 +1,7 @@
 # PULSE · Cross-Device Agent Task Progress Monitor
 
+![CI](https://github.com/uahz/pulse-agent-monitor/actions/workflows/ci.yml/badge.svg)
+
 > **PULSE** is a two-sided prototype for monitoring Agent task progress. The **desktop app** is a native Qt Widgets workstation (branded glass UI + a liquid-glass floating widget). The **Android app** is an offline WebView application that connects to the PC over the same LAN — **by scanning a QR code or entering the address manually** — to view the PC's Agent task progress in real time.
 
 [中文说明](README.md) · [Back to top](#contents)
@@ -277,12 +279,14 @@ The result is a Python-free one-file executable, verified to launch independentl
 
 ## Verification
 
-Three reproducible verification suites, all passing before release:
+Five reproducible verification suites (**154 assertions** in total), all passing and wired into CI:
 
 | Script | Coverage | Result |
 |---|---|---|
 | `desktop/verify_pair.py` | Service startup, health, field contract, token auth (invalid/missing → 401), CORS, no-store, 404, OPTIONS 204, live updates, real QR decoding | **22 / 22** |
 | `desktop/verify_studio.py` | Four pages, 3-column grid, filter/search, new task, tick advancement, overlay toggle/collapse/drag/reduced-motion/live sync/close write-back, pairing service import | **30 / 30** |
+| `desktop/verify_events.py` | Event engine: 10 event types → task state machine (start/restart/step states/progress report/pause/resume/review/fail/complete/log/tokens), unknown-task & bad-line tolerance, three sources (file tail / timeline replay / HTTP push), card rebuild & pairing snapshot after integration | **42 / 42** |
+| `desktop/verify_p1.py` | Token persistence (mode 600 / reuse across restarts / regenerate when corrupted), long-polling (rev change returns instantly / hold wakeup <0.8s / 204 timeout / auth), SSE (push / heartbeat / clean disconnect), mobile in Chromium: poll switch, rev advance, exponential backoff 1s→2s, zero requests after disconnect, auto-recovery after fallback | **28 / 28** |
 | `mobile/verify_link.py` | Chromium CDP loads the real `index.html` from the APK + simulated `NativeBridge.httpGet` + a **real PC service**: disconnected state, 12 tasks after connecting, Chinese badges, progress parity, overview rate, filter counts, sheet steps/logs/read-only, sheet exclusivity, disconnect fallback, late-response suppression, inlined jsQR decoding the real QR address, progress-bar fill, zero metric-card overflow | **32 / 32** |
 
 ```bash
@@ -291,13 +295,27 @@ cd desktop && python3.12 verify_pair.py
 
 # Desktop functions (offscreen)
 cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_studio.py
+cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_events.py
+cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_p1.py
 
 # Mobile loop: start the PC service and extract the APK page first,
 # see the header comment in verify_link.py
 python3.12 mobile/verify_link.py --info <pair_info.json> --qr <qr.png>
 ```
 
-Dev/verification dependencies are in `desktop/requirements-dev.txt` (`zxingcpp`, `Pillow`, `websocket-client`); `verify_link.py` additionally needs a system Chromium for CDP. Before release we also ran: APK v2/v3 signature verification, `zipalign -c`, `unzip -t`, permission/cleartext flag checks, inlined JS `node --check`, and an isolated launch of the packaged desktop binary.
+Dev/verification dependencies are in `desktop/requirements-dev.txt` (`zxingcpp`, `Pillow`, `websocket-client`); `verify_p1.py` / `verify_link.py` additionally need a system Chromium for CDP. Before release we also ran: APK v2/v3 signature verification, `zipalign -c`, `unzip -t`, permission/cleartext flag checks, inlined JS `node --check`, and an isolated launch of the packaged desktop binary.
+
+## CI & Automated Releases
+
+`.github/workflows/ci.yml` runs on every push / PR with three jobs:
+
+| Job | Content |
+|---|---|
+| `desktop-tests` | Installs PySide6 / segno / zxing-cpp / websocket-client / pillow, runs the four desktop suites under Qt offscreen (122 assertions) |
+| `android-build` | JDK 17 + Android SDK 35 builds a signed APK, checked via `apksigner verify` / `zipalign -c` / `unzip -t`, artifact uploaded |
+| `release` | Triggered only by `v*` tags when both jobs above pass: builds the APK and the PyInstaller desktop binary, then creates a GitHub Release with the artifacts |
+
+Release flow: `git tag v1.5.0 && git push --tags` — once CI is green, the GitHub Release and its artifacts are produced automatically.
 
 ---
 
