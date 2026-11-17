@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------- PC 端：四套验证（Qt offscreen）----------------
+  desktop-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装 Qt 运行所需系统库（offscreen）
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1
+      - name: 安装 Python 依赖
+        run: pip install PySide6 segno zxing-cpp websocket-client
+      - name: 语法检查
+        run: python -m py_compile pulse_core.py pulse_glass.py pulse_studio.py pulse_events.py pulse_pair_server.py verify_pair.py verify_studio.py verify_events.py verify_p1.py
+      - name: verify_studio（30 项 · 界面与悬浮窗）
+        run: QT_QPA_PLATFORM=offscreen python verify_studio.py
+      - name: verify_events（42 项 · 事件引擎）
+        run: QT_QPA_PLATFORM=offscreen python verify_events.py
+      - name: verify_pair（22 项 · 配对契约）
+        run: QT_QPA_PLATFORM=offscreen python verify_pair.py
+      - name: verify_p1（28 项 · 长轮询/SSE/token 持久化/移动端 Chromium）
+        run: QT_QPA_PLATFORM=offscreen python verify_p1.py
+
+  # ---------------- Android 端：构建 + 验签检查 ----------------
+  android-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 安装 Android SDK 组件（runner 自带 sdkmanager）
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0" > /dev/null || true
+      - name: 构建签名 APK
+        run: bash mobile/android/build.sh
+      - name: 验签与完整性
+        run: |
+          APK=releases/PULSE_v1.5.0.apk
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          "$BT/apksigner" verify "$APK"
+          "$BT/zipalign" -c 4 "$APK"
+          unzip -t "$APK" > /dev/null
+          "$BT/aapt" dump badging "$APK" | grep -E "package: name='com.pulse.app'"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PULSE-v1.5.0-apk
+          path: releases/PULSE_v1.5.0.apk
+
+  # ---------------- 发版：tag v* 触发 ----------------
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [desktop-tests, android-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 安装 Android SDK 组件
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0" > /dev/null || true
+      - name: 构建 Android APK
+        run: bash mobile/android/build.sh
+      - name: 构建 PC 单文件程序（PyInstaller）
+        run: |
+          pip install PySide6 segno pyinstaller
+          sudo apt-get update && sudo apt-get install -y libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1
+          bash desktop/build_linux.sh
+      - name: 上传到 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" \
+            --title "PULSE $TAG" \
+            --notes "自动化发布：Android 签名 APK + PC Linux 单文件程序（CI 全部验证通过后产出）。详见 README。" \
+            releases/PULSE_v1.5.0.apk desktop/dist/PULSE_Agent_Studio || \
+          gh release upload "$TAG" releases/PULSE_v1.5.0.apk desktop/dist/PULSE_Agent_Studio --clobber
