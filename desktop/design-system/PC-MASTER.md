@@ -353,3 +353,13 @@ python3.12 pulse_studio.py --source http            # 开放 POST /api/events
 - 命令生效延迟 ≤ 2s（引擎 tick 节奏）+ 一次轮询刷新（≤2.5s 调度）——准实时
 - 「重试」即从头重跑（清零 progress/tokens/steps），不支持断点续跑——需 PC 端任务模型支持后可扩展
 - 历史趋势、多 PC 配对（P3 余项）未开始
+
+---
+
+## 13. v3.0.0：形态简化——移除 Studio 工作台，轻量单窗 + 内嵌二维码
+
+> 用户要求：PC 端只要 exe 单文件版本，二维码直接内置在程序里，不要 Agent Studio 工作台。
+
+- **新增** `pulse_desktop.py`：普通单窗口，左侧任务进度列表（状态点/名称/Agent·模型·步骤/进度条/耗时/Tokens 三行式），右侧内嵌配对二维码 + 地址 + token——**启动即显示，无需任何菜单操作**。数据层完整复用 pulse_core/pulse_events/pulse_pair_server（事件引擎、手机命令通道、token 持久化与 Studio 版零差异），Android v1.6.0 兼容。
+- **移除** `pulse_studio.py`、`pulse_glass.py`（玻璃引擎与悬浮窗）、`verify_studio.py` 及相关截图；`verify_desktop.py`（11 项）替代；`verify_events/verify_p1/verify_p3` 宿主迁移到 DesktopWindow。
+- **验证**：六套全绿（11+42+22+28+32+20 = 155 项，verify_studio 30 项随 Studio 移除）；打包 `dist/PULSE_Desktop`（58MB）脱离源码独立启动验证通过。

@@ -79,9 +79,9 @@ def get(port, path):
 
 print("== A 区：PC 命令通道（模拟模式 + 命令）==")
 app = QApplication(sys.argv)
-from pulse_studio import StudioWindow
+from pulse_desktop import DesktopWindow
 
-win = StudioWindow()
+win = DesktopWindow()
 win.live = False
 win.engine.simulate = False  # 冻结模拟推进（random），断言基于确定状态；tick(force=True) 仍消费命令
 app.processEvents()
@@ -189,7 +189,7 @@ win.close()
 
 # ================================================================ B 区
 print("== B 区：移动端抽屉命令按钮（Chromium）==")
-win2 = StudioWindow()
+win2 = DesktopWindow()
 win2.live = False
 win2.engine.simulate = False  # 同上：冻结模拟，queued/running 状态不再随机变化
 app.processEvents()

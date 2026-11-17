@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# PULSE · Agent Studio — Linux / macOS 启动脚本（v2.0.0 全新界面）
-# 如需回退 v1.3.0 旧界面，请手动运行：python3 pulse_agent_console.py
+# PULSE · Desktop — Linux / macOS 启动脚本（v2.0.0 全新界面）
+# PULSE Desktop 轻量单窗版启动脚本
 set -e
 cd "$(dirname "$0")"
 PY=python3

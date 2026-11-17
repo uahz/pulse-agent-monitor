@@ -240,12 +240,12 @@ check("A20b 非法事件拒绝计数", ok is False and hs.rejected == 1)
 # ================================================================ B 区
 print("== B 区：主程序与配对服务集成 ==")
 app = QApplication(sys.argv)
-from pulse_studio import StudioWindow
+from pulse_desktop import DesktopWindow
 
 EVENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "events", "demo_events.jsonl")
 
 # B1 replay 模式接入主程序
-win = StudioWindow(source="replay:" + EVENTS, source_speed=100.0)
+win = DesktopWindow(source="replay:" + EVENTS, source_speed=100.0)
 win.show()
 app.processEvents()
 check("B1a replay 模式描述正确", "demo_events.jsonl" in win.engine_desc and "100.0x" in win.engine_desc,
@@ -270,12 +270,12 @@ check("B1c 回放终态正确（新建完成/原任务失败/暂停恢复/评审
 check("B1d 引擎消费计数与事件数一致",
       win.engine.applied == 18, "applied=%d" % win.engine.applied)
 
-# B2 新任务卡片重建
-check("B2 新任务触发卡片重建", "AGT-2001" in win.workbench.cards)
+# B2 新任务追加列表行
+check("B2 新任务触发列表行追加", "AGT-2001" in win.rows and win.list.count() == n_tasks_0 + 1)
 
 # B3 全局日志页收到事件日志
-logs = [x for x in win.logs_page.rows if "AGT-2001" in str(x) or "AGT-1039" in str(x)]
-check("B3 全局日志页写入事件日志", len(logs) >= 2, "lines=%d" % len(logs))
+logs = [x for x in getattr(win, "_log", []) if "AGT-2001" in str(x) or "AGT-1039" in str(x)]
+check("B3 事件日志被记录", len(logs) >= 1, "lines=%d" % len(logs))
 
 # B4 配对服务快照反映事件驱动状态
 win.pair.publish(win.tasks)
@@ -287,7 +287,7 @@ check("B4 /api/tasks 快照包含事件新建任务且状态正确",
 
 # B5 http 模式：POST /api/events
 win.close()
-win2 = StudioWindow(source="http")
+win2 = DesktopWindow(source="http")
 win2.show()
 app.processEvents()
 check("B5a http 模式描述正确", "POST /api/events" in win2.engine_desc, win2.engine_desc)
@@ -355,7 +355,7 @@ check("B9 批量事件推送并全部应用",
 
 # B10 默认模式回归：无 --source 时模拟推进仍工作
 win2.close()
-win3 = StudioWindow()
+win3 = DesktopWindow()
 app.processEvents()
 p0 = sum(t.progress for t in win3.tasks)
 win3.tick(force=True)

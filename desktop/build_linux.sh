@@ -16,12 +16,12 @@ fi
 "$PY" -m pip install -q segno --break-system-packages 2>/dev/null \
   || "$PY" -m pip install -q segno --user
 "$PY" -m PyInstaller --noconfirm --clean --onefile --windowed \
-  --name "PULSE_Agent_Studio" \
+  --name "PULSE_Desktop" \
   --add-data "resources/fonts:resources/fonts" \
   --add-data "design-system:design-system" \
   --hidden-import segno \
   --hidden-import pulse_core \
-  --hidden-import pulse_glass \
   --hidden-import pulse_pair_server \
-  pulse_studio.py
-echo "[完成] 成品：dist/PULSE_Agent_Studio"
+  --hidden-import pulse_events \
+  pulse_desktop.py
+echo "[完成] 成品：dist/PULSE_Desktop"

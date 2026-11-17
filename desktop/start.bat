@@ -2,7 +2,7 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 echo ============================================
-echo   PULSE · Agent Studio  (Windows 启动)
+echo   PULSE · Desktop  (Windows 启动)
 echo ============================================
 where python >nul 2>nul
 if errorlevel 1 (

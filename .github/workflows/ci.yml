@@ -26,13 +26,13 @@ jobs:
       - name: 安装 Python 依赖
         run: pip install PySide6 segno zxing-cpp websocket-client pillow
       - name: 语法检查
-        run: python -m py_compile pulse_core.py pulse_glass.py pulse_studio.py pulse_events.py pulse_pair_server.py verify_pair.py verify_studio.py verify_events.py verify_p1.py verify_p3.py
-      - name: verify_studio（30 项 · 界面与悬浮窗）
-        run: QT_QPA_PLATFORM=offscreen python verify_studio.py
+        run: python -m py_compile pulse_core.py pulse_glass.py pulse_studio.py pulse_events.py pulse_pair_server.py verify_pair.py verify_desktop.py verify_events.py verify_p1.py verify_p3.py
       - name: verify_events（42 项 · 事件引擎）
         run: QT_QPA_PLATFORM=offscreen python verify_events.py
       - name: verify_pair（22 项 · 配对契约）
         run: QT_QPA_PLATFORM=offscreen python verify_pair.py
+      - name: verify_desktop（11 项 · 轻量单窗）
+        run: QT_QPA_PLATFORM=offscreen python verify_desktop.py
       - name: verify_p1（28 项 · 长轮询/SSE/token 持久化/移动端 Chromium）
         run: QT_QPA_PLATFORM=offscreen python verify_p1.py
       - name: verify_p3（20 项 · 手机端写命令）
@@ -55,7 +55,7 @@ jobs:
         run: bash mobile/android/build.sh
       - name: 验签与完整性
         run: |
-          APK=releases/PULSE_v1.5.0.apk
+          APK=releases/PULSE_v1.6.0.apk
           BT="$ANDROID_HOME/build-tools/35.0.0"
           "$BT/apksigner" verify "$APK"
           "$BT/zipalign" -c 4 "$APK"
@@ -63,8 +63,8 @@ jobs:
           "$BT/aapt" dump badging "$APK" | grep -E "package: name='com.pulse.app'"
       - uses: actions/upload-artifact@v4
         with:
-          name: PULSE-v1.5.0-apk
-          path: releases/PULSE_v1.5.0.apk
+          name: PULSE-v1.6.0-apk
+          path: releases/PULSE_v1.6.0.apk
 
   # ---------------- 发版：tag v* 触发 ----------------
   release:
@@ -99,5 +99,5 @@ jobs:
           gh release create "$TAG" \
             --title "PULSE $TAG" \
             --notes "自动化发布：Android 签名 APK + PC Linux 单文件程序（CI 全部验证通过后产出）。详见 README。" \
-            releases/PULSE_v1.5.0.apk desktop/dist/PULSE_Agent_Studio || \
-          gh release upload "$TAG" releases/PULSE_v1.5.0.apk desktop/dist/PULSE_Agent_Studio --clobber
+            releases/PULSE_v1.6.0.apk desktop/dist/PULSE_Desktop || \
+          gh release upload "$TAG" releases/PULSE_v1.6.0.apk desktop/dist/PULSE_Desktop --clobber
