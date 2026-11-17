@@ -34,6 +34,38 @@ from pulse_core import seed_tasks
 import pulse_pair_server as PPS
 from pulse_pair_server import PairServer, build_payload
 
+# ---- 可移植性：APK 与截图输出目录支持参数/自动探测（沙箱 /workspace 与 GitHub 仓库结构均可）----
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ap = __import__("argparse").ArgumentParser(description="PULSE P1 链路验证")
+_ap.add_argument("--apk", default=None, help="签名 APK 路径（默认自动探测）")
+_ap.add_argument("--out", default=None, help="截图输出目录（默认自动探测）")
+_ap.add_argument("--port", type=int, default=9341, help="Chromium CDP 端口")
+ARGS, _ = _ap.parse_known_args()
+
+
+def _detect_apk():
+    if ARGS.apk:
+        return ARGS.apk
+    for c in (os.path.join(_HERE, "..", "releases", "PULSE_v1.5.0.apk"),
+              "/workspace/PULSE_v1.5.0.apk"):
+        if os.path.exists(c):
+            return os.path.abspath(c)
+    raise RuntimeError("未找到 PULSE_v1.5.0.apk，用 --apk 指定")
+
+
+def _detect_out():
+    if ARGS.out:
+        return ARGS.out
+    for c in (os.path.join(_HERE, "..", "..", "PulseApp"),  # 沙箱
+              _HERE):                                        # 仓库 desktop/
+        if os.path.isdir(c) and os.access(c, os.W_OK):
+            return os.path.abspath(c)
+    return _HERE
+
+
+APK_PATH = _detect_apk()
+OUT_DIR = _detect_out()
+
 RESULTS = []
 
 
@@ -200,7 +232,7 @@ with open(INFO, "w", encoding="utf-8") as f:
 E2E = "/tmp/p1_e2e"
 shutil.rmtree(E2E, ignore_errors=True)
 os.makedirs(E2E)
-os.system("cd %s && unzip -oq /workspace/PULSE_v1.5.0.apk 'assets/*'" % E2E)
+os.system('cd %s && unzip -oq "%s" "assets/*"' % (E2E, APK_PATH))
 shutil.move(os.path.join(E2E, "assets", "index.html"), os.path.join(E2E, "index.html"))
 os.system("cp -r %s/assets/fonts %s/fonts" % (E2E, E2E))
 
@@ -219,21 +251,21 @@ proc = subprocess.Popen([
     chromium(), "--headless=new", "--no-sandbox", "--disable-gpu",
     "--disable-dev-shm-usage", "--disable-web-security",
     "--allow-file-access-from-files", "--remote-allow-origins=*",
-    "--remote-debugging-port=9341",
+    "--remote-debugging-port=%d" % ARGS.port,
     "--user-data-dir=" + os.path.join(E2E, ".chrome-profile"),
     "--window-size=440,940", "about:blank",
 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 for _ in range(60):
     try:
-        urllib.request.urlopen("http://127.0.0.1:9341/json/version", timeout=1).read()
+        urllib.request.urlopen("http://127.0.0.1:%d/json/version" % ARGS.port, timeout=1).read()
         break
     except Exception:
         time.sleep(0.25)
 else:
     raise RuntimeError("Chromium CDP 未就绪")
 
-_req = urllib.request.Request("http://127.0.0.1:9341/json/new?about:blank", method="PUT")
+_req = urllib.request.Request("http://127.0.0.1:%d/json/new?about:blank" % ARGS.port, method="PUT")
 tab = json.loads(urllib.request.urlopen(_req, timeout=5).read())
 ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
 _seq = [0]
@@ -264,7 +296,7 @@ def ev(js, timeout=45):
 def shot(name):
     r = cmd("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False})
     import base64
-    open(os.path.join("/workspace/PulseApp", name), "wb").write(base64.b64decode(r["data"]))
+    open(os.path.join(OUT_DIR, name), "wb").write(base64.b64decode(r["data"]))
 
 
 cmd("Page.enable")
