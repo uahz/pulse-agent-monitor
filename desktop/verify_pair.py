@@ -9,7 +9,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from pulse_agent_console import seed_tasks
+from pulse_core import seed_tasks
 from pulse_pair_server import API_PATH, HEALTH_PATH, PairServer, save_qr_png
 
 PASS, FAIL = [], []
