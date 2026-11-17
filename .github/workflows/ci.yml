@@ -26,7 +26,7 @@ jobs:
       - name: 安装 Python 依赖
         run: pip install PySide6 segno zxing-cpp websocket-client pillow
       - name: 语法检查
-        run: python -m py_compile pulse_core.py pulse_glass.py pulse_studio.py pulse_events.py pulse_pair_server.py verify_pair.py verify_studio.py verify_events.py verify_p1.py
+        run: python -m py_compile pulse_core.py pulse_glass.py pulse_studio.py pulse_events.py pulse_pair_server.py verify_pair.py verify_studio.py verify_events.py verify_p1.py verify_p3.py
       - name: verify_studio（30 项 · 界面与悬浮窗）
         run: QT_QPA_PLATFORM=offscreen python verify_studio.py
       - name: verify_events（42 项 · 事件引擎）
@@ -35,6 +35,8 @@ jobs:
         run: QT_QPA_PLATFORM=offscreen python verify_pair.py
       - name: verify_p1（28 项 · 长轮询/SSE/token 持久化/移动端 Chromium）
         run: QT_QPA_PLATFORM=offscreen python verify_p1.py
+      - name: verify_p3（20 项 · 手机端写命令）
+        run: QT_QPA_PLATFORM=offscreen python verify_p3.py
 
   # ---------------- Android 端：构建 + 验签检查 ----------------
   android-build:

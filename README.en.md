@@ -279,7 +279,7 @@ The result is a Python-free one-file executable, verified to launch independentl
 
 ## Verification
 
-Five reproducible verification suites (**154 assertions** in total), all passing and wired into CI:
+Six reproducible verification suites (**174 assertions** in total), all passing and wired into CI:
 
 | Script | Coverage | Result |
 |---|---|---|
@@ -287,6 +287,7 @@ Five reproducible verification suites (**154 assertions** in total), all passing
 | `desktop/verify_studio.py` | Four pages, 3-column grid, filter/search, new task, tick advancement, overlay toggle/collapse/drag/reduced-motion/live sync/close write-back, pairing service import | **30 / 30** |
 | `desktop/verify_events.py` | Event engine: 10 event types → task state machine (start/restart/step states/progress report/pause/resume/review/fail/complete/log/tokens), unknown-task & bad-line tolerance, three sources (file tail / timeline replay / HTTP push), card rebuild & pairing snapshot after integration | **42 / 42** |
 | `desktop/verify_p1.py` | Token persistence (mode 600 / reuse across restarts / regenerate when corrupted), long-polling (rev change returns instantly / hold wakeup <0.8s / 204 timeout / auth), SSE (push / heartbeat / clean disconnect), mobile in Chromium: poll switch, rev advance, exponential backoff 1s→2s, zero requests after disconnect, auto-recovery after fallback | **28 / 28** |
+| `desktop/verify_p3.py` | Mobile write commands: pause/resume/retry → PC engine applies → snapshot changes, terminal-state/unknown-task/whitelist rejection (with reasons), batch commands, 401 auth, drawer buttons shown by status, command receipt toast, card sync after apply | **20 / 20** |
 | `mobile/verify_link.py` | Chromium CDP loads the real `index.html` from the APK + simulated `NativeBridge.httpGet` + a **real PC service**: disconnected state, 12 tasks after connecting, Chinese badges, progress parity, overview rate, filter counts, sheet steps/logs/read-only, sheet exclusivity, disconnect fallback, late-response suppression, inlined jsQR decoding the real QR address, progress-bar fill, zero metric-card overflow | **32 / 32** |
 
 ```bash
@@ -297,6 +298,7 @@ cd desktop && python3.12 verify_pair.py
 cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_studio.py
 cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_events.py
 cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_p1.py
+cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_p3.py
 
 # Mobile loop: start the PC service and extract the APK page first,
 # see the header comment in verify_link.py
@@ -311,7 +313,7 @@ Dev/verification dependencies are in `desktop/requirements-dev.txt` (`zxingcpp`,
 
 | Job | Content |
 |---|---|
-| `desktop-tests` | Installs PySide6 / segno / zxing-cpp / websocket-client / pillow, runs the four desktop suites under Qt offscreen (122 assertions) |
+| `desktop-tests` | Installs PySide6 / segno / zxing-cpp / websocket-client / pillow, runs the five desktop suites under Qt offscreen (142 assertions) |
 | `android-build` | JDK 17 + Android SDK 35 builds a signed APK, checked via `apksigner verify` / `zipalign -c` / `unzip -t`, artifact uploaded |
 | `release` | Triggered only by `v*` tags when both jobs above pass: builds the APK and the PyInstaller desktop binary, then creates a GitHub Release with the artifacts |
 

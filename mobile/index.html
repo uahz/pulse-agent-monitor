@@ -575,7 +575,7 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
 
 
 /* =========================================================
-   v1.5.0 · 长轮询连接 PC / 远端 Agent 任务渲染
+   v1.6.0 · 长轮询连接 PC / 任务命令操作
    仅新增规则，不覆盖任何既有样式（tab bar / 顶栏材质保持原样）
    ========================================================= */
 .link-entry{width:100%;display:flex;align-items:center;gap:12px;padding:15px var(--space-md);border-radius:16px;background:linear-gradient(150deg,#1E2D48,#1A2740);border:1px solid var(--border);color:var(--color-text);cursor:pointer;text-align:left}
@@ -632,10 +632,20 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
 /* v1.4.0 修正①：进度填充原本是 inline span，宽/高百分比不生效，
    导致所有进度条只显示灰色底槽；改为块级后填充正常，布局结构不变。 */
 .progress-fill{display:block}
-/* v1.4.0 修正②：远端指标卡改两列并允许长 Agent / 模型名换行，
-   避免文字撑破卡片与相邻卡重叠。 */
+/* v1.4.0 修正②：远端指标卡改两列并允许长 Agent / 模型名换行，   避免文字撑破卡片与相邻卡重叠。 */
 .remote-fact{flex:0 0 calc(50% - 4px);min-width:0}
 .remote-fact strong{line-height:1.4;word-break:break-word;overflow-wrap:anywhere}
+
+/* v1.6.0：远端任务命令操作行（暂停/恢复/重试，提交到 PC 端执行） */
+.cmd-row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.cmd-btn{flex:1 1 44%;min-height:44px;border:0;border-radius:12px;font-family:inherit;
+  font-size:13px;font-weight:600;cursor:pointer;color:#F1F5FB;
+  background:rgba(148,163,184,.16);transition:filter .15s ease}
+.cmd-btn:active{filter:brightness(1.25)}
+.cmd-btn.cmd-go{background:rgba(34,197,94,.22)}
+.cmd-btn.cmd-warn{background:rgba(251,191,36,.2)}
+.cmd-btn.cmd-muted{background:rgba(148,163,184,.12)}
+
 </style>
 </head>
 <body>
@@ -696,7 +706,7 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
       <svg class="icon icon-sm" id="autoIcon"><use href="#i-pause"/></svg>
       <span id="autoLabel">自动刷新 30s</span>
     </button>
-    <span class="ver-tag" title="当前构建版本">v1.5.0</span>
+    <span class="ver-tag" title="当前构建版本">v1.6.0</span>
   </div>
 
   <!-- ===================== 视图容器 ===================== -->
@@ -799,7 +809,7 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
       <div class="section-head"><h2>团队动态</h2></div>
       <article class="card timeline" id="timeline"></article>
 
-      <p class="footnote" id="overviewFootnote">PULSE v1.5.0 · 本地离线演示数据 · 由 UI/UX Pro Max 设计系统驱动</p>
+      <p class="footnote" id="overviewFootnote">PULSE v1.6.0 · 本地离线演示数据 · 由 UI/UX Pro Max 设计系统驱动</p>
     </section>
 
     <!-- ---------- 项目 ---------- -->
@@ -874,7 +884,7 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
 
       <div class="section-head"><h2>关于</h2></div>
       <article class="card about-card">
-        <div class="about-row"><span>应用版本</span><strong id="appVersion">1.5.0</strong></div>
+        <div class="about-row"><span>应用版本</span><strong id="appVersion">1.6.0</strong></div>
         <div class="about-row"><span>设计系统</span><strong>UI/UX Pro Max</strong></div>
         <div class="about-row"><span>视觉风格</span><strong>Dark · Bento Grid</strong></div>
         <div class="about-row"><span>字体</span><strong>Fira Code / Fira Sans</strong></div>
@@ -1299,8 +1309,8 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
     }).join('');
 
     $('overviewFootnote').textContent = REMOTE.active
-      ? 'PULSE v1.5.0 · 项目数据来自 PC 实时快照 · 趋势 / 预警 / 团队动态为本地演示'
-      : 'PULSE v1.5.0 · 本地离线演示数据 · 由 UI/UX Pro Max 设计系统驱动';
+      ? 'PULSE v1.6.0 · 项目数据来自 PC 实时快照 · 趋势 / 预警 / 团队动态为本地演示'
+      : 'PULSE v1.6.0 · 本地离线演示数据 · 由 UI/UX Pro Max 设计系统驱动';
     updateTabBadge(s.open);
   }
 
@@ -1496,7 +1506,21 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
         '</span><span class="log-text">' + esc(l.text || '') + '</span></div>';
     }).join('') : '<div class="empty-state">暂无日志</div>';
     html += '<div class="sheet-note" style="margin-top:16px">' + ICON('info', 'icon-sm') +
-      ' 该任务由 PC 端管理，手机端只读展示；进度随 PC 端刷新自动更新。</div>';
+      ' 任务由 PC 端管理；下方操作会提交到 PC 端执行，进度随刷新自动更新。</div>';
+    /* P3：命令操作行（按远端状态显隐） */
+    var cmds = [];
+    if (p.remoteStatus === 'running') cmds.push({ a: 'pause', label: '暂停任务', cls: 'cmd-warn' });
+    if (p.remoteStatus === 'paused') cmds.push({ a: 'resume', label: '恢复执行', cls: 'cmd-go' });
+    if (p.remoteStatus === 'review') cmds.push({ a: 'resume', label: '确认通过，继续执行', cls: 'cmd-go' });
+    if (p.remoteStatus === 'failed') cmds.push({ a: 'retry', label: '重试（从头开始）', cls: 'cmd-go' });
+    if (p.remoteStatus === 'done') cmds.push({ a: 'retry', label: '重新执行', cls: 'cmd-muted' });
+    if (cmds.length) {
+      html += '<div class="cmd-row">' + cmds.map(function (c) {
+        /* 提交用原始任务 id（p.code），pc- 前缀仅用于本地防冲突 */
+        return '<button class="cmd-btn ' + c.cls + '" type="button" data-cmd-action="' + c.a +
+               '" data-cmd-task="' + esc(p.code || p.id) + '">' + esc(c.label) + '</button>';
+      }).join('') + '</div>';
+    }
     $('sheetBody').innerHTML = html;
   }
   function closeSheet() {
@@ -1651,6 +1675,14 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
       if (e.target.closest('#btnScan')) { startScan(); return; }
       if (e.target.closest('#btnConnect')) { doConnect(buildPairUrl($('linkHost').value, $('linkToken').value)); return; }
       if (e.target.closest('#btnDisconnect')) { doDisconnect(); return; }
+      /* P3：远端任务命令按钮 */
+      var cmdBtn = e.target.closest('[data-cmd-action]');
+      if (cmdBtn) {
+        if (!REMOTE.active) { toast('未连接 PC', 'alert'); return; }
+        window.PulseLink.command(cmdBtn.getAttribute('data-cmd-task'),
+                                 cmdBtn.getAttribute('data-cmd-action'));
+        return;
+      }
       // 底部导航 / 跳转按钮
       el = e.target.closest('[data-nav]');
       if (el) { navigate(el.getAttribute('data-nav')); return; }
@@ -1741,12 +1773,12 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
        旧桥 httpGet 兼容；浏览器预览降级为 fetch（PC 服务已允许 CORS）
      -------------------------------------------------------- */
   window.PulseLink = (function () {
-    var listeners = { data: [], error: [], status: [] };
+    var listeners = { data: [], error: [], status: [], cmd: [] };  // P3：+cmd 命令回执
     var pollTimer = null;
     var failStreak = 0;
     var BACKOFF = [1000, 2000, 4000, 8000, 15000, 30000];
     var api = {
-      version: '1.5.0',
+      version: '1.6.0',
       url: '',
       rev: 0,
       connected: false,
@@ -1850,6 +1882,48 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
       if (api.polling) schedulePoll(delay);
       emit('error', api.lastError);
       emit('status', { connected: false, message: api.lastError, at: new Date().toISOString() });
+    };
+    /* P3：手机端写命令（POST /api/command，与轮询数据流隔离） */
+    api.command = function (taskId, action, extra) {
+      var cmdUrl = (api.url || '').replace('/api/tasks', '/api/command');
+      if (cmdUrl === api.url || !cmdUrl) {
+        emit('cmd', { ok: false, task_id: taskId, action: action, why: '通道不可用' });
+        return false;
+      }
+      var payload = JSON.stringify({
+        task_id: taskId, action: action,
+        reason: (extra && extra.reason) || ''
+      });
+      if (window.Android && window.Android.httpPostT) {
+        try { window.Android.httpPostT(cmdUrl, payload); return true; }
+        catch (e) {
+          emit('cmd', { ok: false, task_id: taskId, action: action, why: '原生桥不可用' });
+          return false;
+        }
+      }
+      if (window.fetch) {
+        fetch(cmdUrl, { method: 'POST', cache: 'no-store',
+                        headers: { 'Content-Type': 'application/json' }, body: payload })
+          .then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.text();
+          })
+          .then(function (txt) { api._onCmdResult(txt || '{}'); })
+          .catch(function (e) { api._onCmdError(String(e)); });
+        return true;
+      }
+      emit('cmd', { ok: false, task_id: taskId, action: action, why: '无可用网络通道' });
+      return false;
+    };
+    /* 由 MainActivity.httpPostT 回调 */
+    api._onCmdResult = function (txt) {
+      var data;
+      try { data = JSON.parse(txt); } catch (e) { data = { ok: false, why: 'bad_json' }; }
+      emit('cmd', data);
+      if (api.polling) schedulePoll(2500);  // 命令入队后稍候拉取新快照
+    };
+    api._onCmdError = function (msg) {
+      emit('cmd', { ok: false, error: String(msg || '命令失败') });
     };
     return api;
   })();
@@ -2077,6 +2151,19 @@ body{background:radial-gradient(92% 44% at 50% -6%,rgba(34,197,94,.10),transpare
     renderLinkUI();
   }).on('status', function (s) {
     if (!s.connected && s.message === '已断开') renderLinkUI();
+  }).on('cmd', function (r) {
+    /* P3：命令回执——HTTP 层 ok 且无 rejected 才算成功；拒绝时展示 PC 端原因 */
+    var rej = (r && r.details && r.details.filter(function (d) { return d.ok === false; })) || [];
+    if (!r || r.ok !== true || rej.length > 0) {
+      var why = (rej[0] && rej[0].why) || (r && (r.why || r.error)) || '命令未生效';
+      if (why.indexOf('task_not_found') >= 0) why = '任务在 PC 端已不存在';
+      if (why === 'unknown_action') why = 'PC 端不支持该操作';
+      toast('操作失败 · ' + why, 'alert');
+      return;
+    }
+    var first = (r.details && r.details[0]) || {};
+    var labels = { pause: '已提交暂停', resume: '已提交恢复', retry: '已提交重试' };
+    toast(labels[first.action] || '命令已提交', 'check');
   });
 
   /* ---------------- 启动 ---------------- */

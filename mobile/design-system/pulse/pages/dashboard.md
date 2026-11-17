@@ -138,3 +138,25 @@
 - **版本**：`versionCode=10 / versionName=1.4.0`，产物 `PULSE_v1.4.0.apk`（旧 v1.3.0 保留作回退）；界面 `ver-tag` / 页脚 / `appVersion` / `PulseLink.version` 同步 v1.4.0。仍为单文件内联 + 6 字体，构建链零外部依赖。
 - **验证**：新增 `verify_link.py`（Chromium CDP 加载 APK 内真实 `index.html` + 模拟 `NativeBridge.httpGet` + 请求 PC v2.0.0 真实服务）**32/32 通过**：初始 5 个本地项目、连接后 12 个 PC 任务、中文状态徽章、进度与 PC 一致、概览完成率、筛选数量、抽屉步骤 / 日志 / 只读、sheet 互斥、断开即时回退、6 秒后迟到响应仍被抑制、内联 jsQR 解出真实二维码地址、进度条填充实测 `302/302`、指标卡零溢出。`verify_pair.py` 22/22 独立复跑（PC 端本轮未改，零回归）。APK v2/v3 验签、`zipalign -c`、`unzip -t`、权限与明文标志、dex 内含 `WebChromeClient / onPermissionRequest / requestPermissions / httpGet`、内联 JS `node --check` 全通过。
 - **已知限制 / 下一步**：相机扫码依赖 Android WebView 对 `file://` 授予 `getUserMedia`，部分机型或较旧系统 WebView 可能失败，此时自动退化到手动输入（能力不丢失）；需真机验证 CAMERA 运行时授权与后置摄像头取帧。PC 端 token 每次启动重新生成，过期后需重新扫码或在面板点「连接」。两端数据仍为本地 `seed_tasks()` + `random` 推进，未接真实 agent 事件源。
+
+## v1.5.0 LAN Link（长轮询 + 指数退避 + 断线自动恢复）
+
+- **目标**：落实 P1 链路升级——PC 重启免重新扫码（token 持久化）、准实时推送（长轮询）、断线退避与自动恢复。方向仍为「复用项目页、不动 tab bar / 顶栏 / 卡片布局」，本轮 Web 层改动全部集中在 `PulseLink` 通道层。
+- **长轮询**：首轮 `GET /api/tasks` 全量（契约与 v1.4.0 一致），之后 `GET /api/poll?rev=N`：服务端快照修订号变化立即返回（含 `rev`），未变化挂起至 hold（默认 8s）超时 204。PC 端每 2s tick `publish` 时 rev +1 并唤醒挂起连接——进度变化 1s 内推达手机，且远低于固定轮询的空开销。
+- **原生桥**：`MainActivity` 新增 `httpGetT(url, timeoutMs)`（读超时参数化，默认 15000 覆盖长轮询挂起），旧 `httpGet` 保留兼容；Web 层优先 `httpGetT`，回退 `httpGet`，浏览器预览走 fetch（204 空体 → 视为无变化立即下一轮）。
+- **指数退避**：失败按 1/2/4/8/15/30s 退避，成功重置；连续失败仍由上层 `linkFailCount>=2` 语义断线回退（瞬时失败不断线）。
+- **断线自动恢复（本轮修掉的真 Bug）**：`dropRemote` 断线回退时原实现不清长轮询 rev——服务端此后无变化则永远 204，远端视图**无法自动恢复**，界面卡在「连接失败」且「断开」按钮禁用、后台空转轮询。修复：回退时清零 `PulseLink.rev`，下一轮强制全量同步自动恢复。实测：连续 2 次失败回退本地 → 下一轮 poll 全量返回 → 自动重连 12 个任务、「断开」按钮恢复可用。
+- **token 持久化（PC 端配合）**：PC 端 token 持久化到 `~/.pulse/pair_token`（600 权限，损坏自动重生成），重启后 token 不变 → 手机端已保存地址 + 启动静默重连真实生效（回归时曾用旧 profile 直接复现「加载即已连接」）。App 端零改动即受益。
+- **版本**：`versionCode=11 / versionName=1.5.0`，产物 `PULSE_v1.5.0.apk`（v1.4.0 保留回退）；`ver-tag` / 页脚 / `appVersion` / `PulseLink.version` 同步 v1.5.0。
+- **验证**：PC 端新增 `verify_p1.py` **28/28**（A 区 18 项服务端：token 持久化/复用/损坏重生成、poll 立即返回/hold 唤醒 <0.8s/超时 204/鉴权/坏 rev、SSE 初始推送/变化推送/心跳/断开清理/鉴权/stop 不挂死；B 区 10 项 Chromium + fetch 拦截桥：首轮全量、poll 切换、rev 递增、204 节奏 ≈ hold、退避 1s→2s 递增、成功重置、断开零新请求、回退语义）。`verify_link.py` **32/32** 更新到 v1.5.0 页面（模拟桥 `getVersion` 同步）；`verify_events` 42/42、`verify_studio` 30/30、`verify_pair` 22/22 零回归。APK v2/v3 验签、`zipalign -c`、内联 JS `node --check` 全通过。
+- **已知限制 / 下一步**：长轮询 hold 默认 8s，弱网高延迟下极端情况延迟上限 8s+退避；SSE `/api/stream` 已在 PC 端就绪但 Android WebView 的 `EventSource` 在 `file://` 下兼容性不确定，暂不启用（长轮询已达准实时）；真机验收项延续 v1.4.0 清单。
+
+## v1.6.0 Task Commands（手机端暂停 / 恢复 / 重试）
+
+- **目标**：P3 把连接后「只读」升级为可操作——远端任务抽屉按状态显示命令按钮，提交到 PC 端执行。UI 红线不变：tab bar / 顶栏 / 卡片布局一行未改，新增 `.cmd-row/.cmd-btn` 独立样式类。
+- **命令按钮**：running→「暂停任务」（琥珀）；paused→「恢复执行」（绿）；review→「确认通过，继续执行」（绿）；failed→「重试（从头开始）」（绿）；done→「重新执行」（灰）；queued→无按钮。按钮仅出现在已连接的远端任务抽屉，本地任务不受影响。
+- **提交链路**：`PulseLink.command(taskId, action)` → 原生 `httpPostT`（新增桥，子线程 POST，回调与轮询数据流隔离）→ PC `POST /api/command` → 命令映射为规范事件（复用 P0 状态机）→ 引擎应用 → 下次轮询同步回手机。浏览器预览环境走 fetch 降级。回执 toast + 2.5s 后延时全量刷新。
+- **修掉的 3 个真 Bug**：① PC 端 CORS `Allow-Methods` 缺 POST → 浏览器命令按钮全部静默失败；② `PulseLink` 的 `listeners` 缺 `cmd` 键 → `on('cmd')` 注册被静默忽略、回执无人接收；③ 按钮误传 `pc-` 前缀映射 id → 服务端 `task_not_found` 拒绝且前端误报成功 → 改传原始 id（`p.code`）且回执按 `rejected` 区分失败原因（toast 显示 PC 端拒绝原因，如「任务在 PC 端已不存在」）。
+- **版本**：`versionCode=12 / versionName=1.6.0`，产物 `PULSE_v1.6.0.apk`；ver-tag / 页脚 / appVersion / PulseLink.version 同步。
+- **验证**：PC 端新增 `verify_p3.py` **20/20**（A 区命令契约 12 项 + B 区 Chromium 抽屉按钮与命令应用 8 项，含「点击暂停 → PC 应用 → 手机卡片同步显示已暂停」全链路）；`verify_link.py` **32/32** 更新到 v1.6.0；五套既有回归（30+42+22+28）全部通过，共 **174 项断言**全绿并纳入 CI。
+- **已知限制 / 下一步**：命令生效 ≤2s（PC tick 节奏）+ 刷新 ≤2.5s；「重试」为从头重跑不支持断点续跑；P3 余项（历史趋势、多 PC 配对）未开始。

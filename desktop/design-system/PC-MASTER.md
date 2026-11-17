@@ -309,3 +309,47 @@ python3.12 pulse_studio.py --source http            # 开放 POST /api/events
 - 长轮询延迟上限 = `poll_hold`(8s) + 退避；SSE 已就绪但 Android WebView `EventSource` 在 `file://` 下兼容性不确定，暂不启用
 - token 持久化后取消「一次性 token」的会话隔离——安全性依赖局域网边界与 600 权限文件；如需撤销配对，删除 token 文件并重启
 - P2 待办：Android 真机清单（CAMERA / WebView 兼容）、Windows exe、悬浮窗多显示器、GitHub Actions CI 自动发版
+
+---
+
+## 12. v2.2.0（P3）：手机端写命令——暂停 / 恢复 / 重试
+
+> 目标：连接后从「只读」升级为可操作。设计上完全复用 P0 事件状态机——**命令即事件**：服务端把用户命令翻译为规范事件推入命令队列，引擎用同一套状态机应用，零新增状态逻辑。
+
+### 12.1 命令协议（POST /api/command，token 鉴权，任何 --source 模式可用）
+
+| action | 映射事件 | 允许来源状态 | 语义 |
+|---|---|---|---|
+| `pause` | `task_paused`（reason=手机端暂停） | running / review / paused | 请求体可带自定义 reason |
+| `resume` | `task_resumed` | paused / review | review 任务「确认通过」同此 |
+| `retry` | `task_started` | failed / paused / review / done | 从头开始（清零重跑，引擎既有语义） |
+
+拒绝语义（响应 200 但 `rejected>0` 并给出原因）：终态不可暂停/恢复、`queued` 不可恢复、任务不存在（`task_not_found`）、白名单外 action（`unknown_action`）。批量基于**同一快照**校验——顺序依赖的命令（如 pause+resume 同任务）属预期拒绝，分两次提交即可。
+
+### 12.2 实现
+
+| 端 | 改动 |
+|---|---|
+| PC `pulse_events.py` | `EventEngine` 加 `extra_sources`（附加事件源，与主 source 并列消费）；模拟分支条件保持「无主 source 即模拟」——命令通道不抑制模拟推进 |
+| PC `pulse_pair_server.py` | `PairServer.set_command_source()`；`/api/command` 路由 + `COMMAND_ACTIONS` 映射表 + 存在性/状态校验；`_cors()` 修复 **Allow-Methods 补 POST**（浏览器命令按钮的预检依赖，旧值只允许 GET 导致跨域 POST 全部失败） |
+| PC `pulse_studio.py` | `_build_engine` 各模式统一注入 cmd_source；APP_VER 2.2.0 |
+| Android `MainActivity` | `httpPostT(url, body)` 桥（子线程 POST，回调与数据流隔离的 `_onCmdResult/_onCmdError`）；versionCode 12 / 1.6.0 |
+| Android `index.html` | `PulseLink.command(taskId, action)`（原生桥优先，fetch 降级）；远端抽屉按状态显示命令按钮（`.cmd-row` 独立样式）；**data-cmd-task 用原始 id（p.code）而非 pc- 前缀映射 id**；cmd 监听器区分 HTTP 层 ok 与命令层 rejected；回执 toast + 2.5s 后延时刷新 |
+
+### 12.3 修掉的 3 个真 Bug（均为实测暴露）
+
+1. **CORS 预检拒绝 POST**：`Allow-Methods` 只有 `GET, OPTIONS`，浏览器端命令按钮全部静默失败 → 补 POST
+2. **cmd 监听器未注册**：`listeners` 初始化缺 `cmd` 键，`on('cmd')` 被静默忽略、回执永远无人接收 → 补键
+3. **映射 id 混淆**：按钮传 `pc-AGT-1042`（本地防冲突前缀）而服务端快照是 `AGT-1042` → 拒绝 `task_not_found` 且前端误报成功 → 改传 `p.code` + 回执按 `rejected` 区分
+
+### 12.4 验证（六套全绿，共 174 项）
+
+- `verify_p3.py` **20/20**（新）：A 区 12 项命令契约（暂停/恢复/重试应用、终态拒绝含原因、queued 拒绝恢复、task_not_found、unknown_action、批量、401×2、health 端点）+ B 区 8 项移动端（按钮按状态显隐、点击 POST、成功回执 toast、命令应用后卡片同步「已暂停」、done→重新执行、queued/本地无按钮）
+- 回归：`verify_studio` 30、`verify_events` 42、`verify_pair` 22、`verify_p1` 28、`verify_link` 32（更新到 v1.6.0 页面，只读断言改为「由 PC 端管理」）——全部通过
+- 打包：`dist/PULSE_Agent_Studio`（2.2.0）、`PULSE_v1.6.0.apk`（versionCode 12）
+
+### 12.5 已知限制 / 下一步
+
+- 命令生效延迟 ≤ 2s（引擎 tick 节奏）+ 一次轮询刷新（≤2.5s 调度）——准实时
+- 「重试」即从头重跑（清零 progress/tokens/steps），不支持断点续跑——需 PC 端任务模型支持后可扩展
+- 历史趋势、多 PC 配对（P3 余项）未开始

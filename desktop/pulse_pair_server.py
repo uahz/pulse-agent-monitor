@@ -33,6 +33,7 @@ HEALTH_PATH = "/api/health"
 EVENTS_PATH = "/api/events"   # P0：POST 推送 Agent 事件（仅 http 事件模式启用）
 POLL_PATH = "/api/poll"       # P1：长轮询（rev 变化即返回，未变化挂起至 hold 超时）
 STREAM_PATH = "/api/stream"   # P1：SSE 实时推送
+COMMAND_PATH = "/api/command"  # P3：POST 手机端写命令（pause/resume/retry，始终可用）
 DEFAULT_PORT = 8765
 # 配对协议版本（HTTP 接口契约），与 PC 应用 UI 版本 APP_VER 解耦：
 # 自 v1.3.0 引入后 /api/tasks 响应字段未变；P1 新增 /api/poll 与 /api/stream
@@ -188,7 +189,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        # P3：POST（/api/command、/api/events）需允许跨域，浏览器页面的命令按钮依赖它
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
         self.send_header("Pragma", "no-cache")
@@ -220,7 +222,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "port": self.server.server_address[1],
                 "token_required": True, "requests": state.requests,
                 "endpoints": [HEALTH_PATH, API_PATH, POLL_PATH, STREAM_PATH]
-                              + ([EVENTS_PATH] if self.server.event_source else []),
+                              + ([EVENTS_PATH] if self.server.event_source else [])
+                              + ([COMMAND_PATH] if self.server.command_source else []),
             })
             return
         if u.path == API_PATH:
@@ -323,9 +326,84 @@ class _Handler(BaseHTTPRequestHandler):
             pass  # 客户端断开：静默清理，服务不受影响
 
     # ---------------- P0：接收外部 Agent 事件推送 ----------------
+    # ---------------- P3：手机端写命令（pause/resume/retry） ----------------
+    COMMAND_ACTIONS = {
+        # action -> (事件类型, 允许的来源状态, 拒绝原因)
+        "pause":  ("task_paused", ("running", "review", "paused"),
+                   "仅运行中 / 待人工确认 / 已暂停的任务可以暂停"),
+        "resume": ("task_resumed", ("paused", "review"),
+                   "仅已暂停 / 待人工确认的任务可以恢复"),
+        "retry":  ("task_started", ("failed", "paused", "review", "done"),
+                   "失败 / 已暂停 / 待人工确认 / 已完成的任务可以重试（从头开始）"),
+    }
+
+    def _handle_command(self, state, q):
+        src = self.server.command_source
+        if src is None:
+            self._send_json(404, {"ok": False, "error": "not_available",
+                                  "hint": "命令通道由主窗口注入后开放"})
+            return
+        token = q.get("token", [""])[0]
+        if not token:
+            token = self.headers.get("X-Pulse-Token", "")
+        if not token or not secrets.compare_digest(token, state.token):
+            self._send_json(401, {"ok": False, "error": "invalid_token"})
+            return
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_json(400, {"ok": False, "error": "bad_length"})
+            return
+        if n <= 0 or n > 65536:
+            self._send_json(400, {"ok": False, "error": "bad_length", "max": 65536})
+            return
+        try:
+            raw = json.loads(self.rfile.read(n).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self._send_json(400, {"ok": False, "error": "bad_json"})
+            return
+        items = raw.get("commands") if isinstance(raw, dict) else raw
+        if not isinstance(items, list):
+            items = [raw]
+        # 任务存在性检查基于最新快照
+        snapshot_ids = {t["id"]: t["status"] for t in
+                        json.loads(state.snapshot()).get("tasks", [])}
+        accepted, details = 0, []
+        for obj in items[:32]:
+            if not isinstance(obj, dict):
+                details.append({"ok": False, "why": "bad_item"})
+                continue
+            tid = str(obj.get("task_id", ""))
+            action = str(obj.get("action", ""))
+            if action not in self.COMMAND_ACTIONS:
+                details.append({"task_id": tid, "action": action, "ok": False,
+                                "why": "unknown_action"})
+                continue
+            if tid not in snapshot_ids:
+                details.append({"task_id": tid, "action": action, "ok": False,
+                                "why": "task_not_found"})
+                continue
+            etype, allowed, why = self.COMMAND_ACTIONS[action]
+            if snapshot_ids[tid] not in allowed:
+                details.append({"task_id": tid, "action": action, "ok": False,
+                                "why": why})
+                continue
+            ev = {"type": etype, "task_id": tid}
+            if action == "pause":
+                ev["reason"] = str(obj.get("reason") or "手机端暂停")
+            ok, _ = src.push(ev)
+            details.append({"task_id": tid, "action": action, "ok": bool(ok),
+                            "why": "" if ok else "queue full"})
+            accepted += 1 if ok else 0
+        self._send_json(200, {"ok": True, "accepted": accepted,
+                              "rejected": len(details) - accepted, "details": details})
+
     def do_POST(self):
         u = urlparse(self.path)
         state = self.server.state
+        if u.path == COMMAND_PATH:
+            self._handle_command(state, parse_qs(u.query))
+            return
         src = self.server.event_source
         if u.path != EVENTS_PATH or src is None:
             self._send_json(404, {"ok": False, "error": "not_found",
@@ -373,10 +451,15 @@ class PairServer:
         self._httpd = None
         self._thread = None
         self.event_source = None  # HttpEventSource，仅 http 事件模式下由宿主注入
+        self.command_source = None  # P3：手机命令队列，由主窗口始终注入
 
     def set_event_source(self, source):
         """宿主在 start() 前调用；注入后 health 会列出 /api/events。"""
         self.event_source = source
+
+    def set_command_source(self, source):
+        """宿主在 start() 前调用；注入后手机端可 POST /api/command。"""
+        self.command_source = source
 
     def start(self):
         last = ""
@@ -386,6 +469,7 @@ class PairServer:
                 httpd.daemon_threads = True
                 httpd.state = self.state
                 httpd.event_source = self.event_source
+                httpd.command_source = self.command_source
                 httpd.poll_hold = self.poll_hold
                 httpd.stop_event = self.stop_event
                 httpd.heartbeat_cycles = self.heartbeat_cycles

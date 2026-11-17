@@ -1043,24 +1043,32 @@ class StudioWindow(QMainWindow):
 
     # ------------------------------------------------------------ 数据驱动引擎
     def _build_engine(self, source, speed):
-        """按 --source 构建事件引擎；缺省保持本地模拟（向后兼容）。"""
+        """按 --source 构建事件引擎；缺省保持本地模拟（向后兼容）。
+
+        P3：无论哪种模式，命令通道（手机端 pause/resume/retry）始终可用——
+        命令以规范事件进入 cmd_source 队列，由引擎复用同一状态机应用。
+        """
+        self.cmd_source = HttpEventSource()
+        self.pair.set_command_source(self.cmd_source)
+        extra = [self.cmd_source]
         if not source:
             self.engine = EventEngine(
                 self.tasks, source=None, simulate=True,
-                on_event=self._on_engine_event)
+                on_event=self._on_engine_event, extra_sources=extra)
+            self.engine_desc = "本地模拟 + 手机命令通道"
             return
         if source == "none":
             self.engine = EventEngine(
                 self.tasks, source=None, simulate=False,
-                on_event=self._on_engine_event)
-            self.engine_desc = "冻结模式（--source none，不推进）"
+                on_event=self._on_engine_event, extra_sources=extra)
+            self.engine_desc = "冻结模式（--source none，不推进；命令可用）"
             return
         if source == "http":
             src = HttpEventSource()
             self.engine = EventEngine(
                 self.tasks, source=src, simulate=True,
                 on_event=self._on_engine_event,
-                on_task_added=self._on_task_added)
+                on_task_added=self._on_task_added, extra_sources=extra)
             self.pair.set_event_source(src)
             self.engine_desc = "HTTP 事件推送（POST /api/events，token 鉴权）"
             return
@@ -1070,7 +1078,7 @@ class StudioWindow(QMainWindow):
             self.engine = EventEngine(
                 self.tasks, source=src, simulate=True,
                 on_event=self._on_engine_event,
-                on_task_added=self._on_task_added)
+                on_task_added=self._on_task_added, extra_sources=extra)
             self.engine_desc = "事件文件跟随（%s）" % os.path.basename(path)
             return
         if source.startswith("replay:"):
@@ -1079,7 +1087,7 @@ class StudioWindow(QMainWindow):
             self.engine = EventEngine(
                 self.tasks, source=src, simulate=True,
                 on_event=self._on_engine_event,
-                on_task_added=self._on_task_added)
+                on_task_added=self._on_task_added, extra_sources=extra)
             self.engine_desc = "事件回放（%s · %.1fx）" % (os.path.basename(path), speed)
             return
         raise ValueError("--source 仅支持 none / http / file:路径 / replay:路径")

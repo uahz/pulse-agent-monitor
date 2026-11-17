@@ -25,7 +25,7 @@ RES_DIR = os.path.join(BASE_DIR, "resources")
 
 APP_NAME = "PULSE"
 APP_SUB = "AGENT STUDIO"
-APP_VER = "2.1.0"
+APP_VER = "2.2.0"
 
 # ---------------------------------------------------------------- 设计令牌
 # 与移动端 PULSE 同源的深空底 + 荧光绿主色；额外加入青/紫/琥珀用于氛围光晕。

@@ -39,7 +39,7 @@ def main():
     app.processEvents()
 
     # ---- 版本与窗口 ----
-    check("版本号为 2.1.0", APP_VER == "2.1.0", APP_VER)
+    check("版本号为 2.2.0", APP_VER == "2.2.0", APP_VER)
     check("无边框 + 半透明背景",
           bool(win.windowFlags() & studio.Qt.FramelessWindowHint) and
           win.testAttribute(studio.Qt.WA_TranslucentBackground))

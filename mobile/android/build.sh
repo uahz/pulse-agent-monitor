@@ -10,15 +10,9 @@ SDK="${ANDROID_HOME:-/opt/android-sdk}"
 BT="$SDK/build-tools/35.0.0"
 PLATFORM="$SDK/platforms/android-35/android.jar"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-# Web 源：沙箱结构 mobile/web/，仓库结构 mobile/index.html（两者兼容）
-if [ -f "$ROOT/../web/index.html" ]; then
-  WEB="$ROOT/../web"
-else
-  WEB="$ROOT/.."
-fi
+WEB="$ROOT/../web"
 OUT="$ROOT/build"
-# 输出：默认仓库 releases/；可用 PULSE_APK_OUT 覆盖
-APK="${PULSE_APK_OUT:-$ROOT/../../releases/PULSE_v1.5.0.apk}"
+APK="$ROOT/../../PULSE_v1.6.0.apk"
 # 演示用签名口令：可用环境变量覆盖；pulse.keystore 为本地私钥，不纳入版本库（.gitignore）
 KS_PASS="${PULSE_KS_PASS:-pulse2026}"
 
@@ -45,7 +39,7 @@ echo "[2/8] 链接资源并生成 R.java (aapt2 link)"
   -A "$ROOT/assets" \
   -0 woff2 \
   --min-sdk-version 24 --target-sdk-version 35 \
-  --version-code 11 --version-name 1.5.0 \
+  --version-code 12 --version-name 1.6.0 \
   "${FLATS[@]}"
 
 echo "[3/8] 编译 Java 源码 (javac)"

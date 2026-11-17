@@ -250,13 +250,14 @@ class EventEngine:
     """
 
     def __init__(self, tasks, source=None, simulate=True,
-                 on_log=None, on_event=None, on_task_added=None):
+                 on_log=None, on_event=None, on_task_added=None, extra_sources=None):
         self.tasks = tasks          # 外部列表引用，就地修改
         self.source = source
         self.simulate = simulate
         self.on_log = on_log
         self.on_event = on_event
         self.on_task_added = on_task_added
+        self.extra_sources = list(extra_sources or [])  # P3：命令队列等附加源
         self.applied = 0            # 已应用事件计数
         self.unknown_ids = []       # 未匹配任务的容错记录
         self._unknown_seen = set()
@@ -265,14 +266,16 @@ class EventEngine:
     def step(self, dt=2):
         """消费一轮事件并推进；返回是否有任何数据变化。"""
         changed = False
-        if self.source is not None:
-            for ev in self.source.poll():
+        sources = ([self.source] if self.source is not None else []) + self.extra_sources
+        for src in sources:
+            for ev in src.poll():
                 if self._apply(ev):
                     changed = True
         if self.simulate and self.source is None:
+            # 默认模式：模拟推进 + 命令通道并存（命令不抑制模拟）
             changed = self._simulate_step(dt) or changed
-        elif self.simulate and self.source is not None:
-            # 事件模式下：running 任务按真实时间流逝累计 elapsed
+        elif self.simulate:
+            # 事件源模式下：running 任务按真实时间流逝累计 elapsed
             for t in self.tasks:
                 if t.status == "running":
                     t.elapsed += dt

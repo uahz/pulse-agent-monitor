@@ -279,7 +279,7 @@ bash build_linux.sh          # Linux: dist/PULSE_Agent_Studio
 
 ## 验证
 
-五套可复跑的验证脚本（共 **154 项断言**），全部通过且已纳入 CI：
+六套可复跑的验证脚本（共 **174 项断言**），全部通过且已纳入 CI：
 
 | 脚本 | 范围覆盖 | 结果 |
 |---|---|---|
@@ -287,6 +287,7 @@ bash build_linux.sh          # Linux: dist/PULSE_Agent_Studio
 | `desktop/verify_studio.py` | 四页切换、3 列网格、筛选/搜索、新建任务、tick 推进、悬浮窗开关/折叠/拖拽/减弱动效/实时同步/关闭回写、配对服务可导入 | **30 / 30** |
 | `desktop/verify_events.py` | 事件引擎：10 类事件 → 任务状态机（新建/重启/步骤四态/进度直报/暂停恢复/评审/失败/完成/日志/Tokens）、未知任务与坏行容错、文件跟随/时间轴回放/HTTP 推送三种事件源、接入主程序后的卡片重建与配对快照 | **42 / 42** |
 | `desktop/verify_p1.py` | token 持久化（落盘 600 / 重启复用 / 损坏重生成）、长轮询（rev 立即返回 / hold 唤醒 <0.8s / 超时 204 / 鉴权）、SSE（推送 / 心跳 / 断开清理）、移动端 Chromium：poll 切换、rev 递增、指数退避 1s→2s、断开零新请求、回退自动恢复 | **28 / 28** |
+| `desktop/verify_p3.py` | 手机端写命令：暂停/恢复/重试 → PC 引擎应用 → 快照变化、终态/未知任务/白名单外拒绝（含原因）、批量命令、401 鉴权、抽屉按钮按状态显隐、命令回执 toast、命令应用后手机卡片同步 | **20 / 20** |
 | `mobile/verify_link.py` | Chromium CDP 加载 APK 内真实 `index.html` + 模拟 `NativeBridge.httpGet` + 请求 **真实 PC 服务**：未连接态、连接后 12 个任务、中文徽章、进度一致、概览完成率、筛选数量、抽屉步骤/日志/只读、sheet 互斥、断线回退、迟到响应抑制、内联 jsQR 解出二维码地址、进度条填充、指标卡零溢出 | **32 / 32** |
 
 ```bash
@@ -297,6 +298,7 @@ cd desktop && python3.12 verify_pair.py
 cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_studio.py
 cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_events.py
 cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_p1.py
+cd desktop && QT_QPA_PLATFORM=offscreen python3.12 verify_p3.py
 
 # 移动端闭环：需先启动 PC 服务并解出 APK 页面，详见 verify_link.py 顶部注释
 python3.12 mobile/verify_link.py --info <pair_info.json> --qr <qr.png>
@@ -310,7 +312,7 @@ python3.12 mobile/verify_link.py --info <pair_info.json> --qr <qr.png>
 
 | Job | 内容 |
 |---|---|
-| `desktop-tests` | 安装 PySide6 / segno / zxing-cpp / websocket-client / pillow，Qt offscreen 依次跑四套 PC 验证（122 项断言） |
+| `desktop-tests` | 安装 PySide6 / segno / zxing-cpp / websocket-client / pillow，Qt offscreen 依次跑五套 PC 验证（142 项断言） |
 | `android-build` | JDK 17 + Android SDK 35 构建签名 APK，`apksigner verify` / `zipalign -c` / `unzip -t` 检查，上传构建产物 |
 | `release` | 仅当推送 `v*` 标签且上述两个 job 全绿时触发：构建 APK 与 PC 单文件程序（PyInstaller），自动创建 GitHub Release 并上传产物 |
 

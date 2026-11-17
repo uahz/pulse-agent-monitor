@@ -148,7 +148,55 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String getVersion() {
-            return "1.5.0";
+            return "1.6.0";
+        }
+
+        /**
+         * P3：局域网 HTTP POST 桥——手机端写命令（暂停/恢复/重试）。
+         * 成功回调 window.PulseLink._onCmdResult(jsonText)，失败回调 _onCmdError(message)。
+         * 与 httpGetT 的数据通道完全隔离，不会混入轮询数据流。
+         */
+        @JavascriptInterface
+        public void httpPostT(final String url, final String body) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    HttpURLConnection conn = null;
+                    try {
+                        URL u = new URL(url);
+                        conn = (HttpURLConnection) u.openConnection();
+                        conn.setRequestMethod("POST");
+                        conn.setConnectTimeout(4000);
+                        conn.setReadTimeout(8000);
+                        conn.setDoOutput(true);
+                        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                        byte[] out = body.getBytes("UTF-8");
+                        conn.setFixedLengthStreamingMode(out.length);
+                        java.io.OutputStream os = conn.getOutputStream();
+                        os.write(out);
+                        os.close();
+                        int code = conn.getResponseCode();
+                        InputStream in = (code >= 200 && code < 300)
+                                ? conn.getInputStream() : conn.getErrorStream();
+                        String resp = readAll(in);
+                        if (in != null) { try { in.close(); } catch (Exception ignored) {} }
+                        final String script = (code >= 200 && code < 300)
+                                ? "window.PulseLink&&window.PulseLink._onCmdResult(" + jsQuote(resp) + ")"
+                                : "window.PulseLink&&window.PulseLink._onCmdError(" + jsQuote("HTTP " + code) + ")";
+                        runOnUiThread(new Runnable() {
+                            @Override public void run() { webView.evaluateJavascript(script, null); }
+                        });
+                    } catch (final Exception e) {
+                        final String script = "window.PulseLink&&window.PulseLink._onCmdError("
+                                + jsQuote(String.valueOf(e.getMessage())) + ")";
+                        runOnUiThread(new Runnable() {
+                            @Override public void run() { webView.evaluateJavascript(script, null); }
+                        });
+                    } finally {
+                        if (conn != null) conn.disconnect();
+                    }
+                }
+            }, "pulse-cmd").start();
         }
 
         /**

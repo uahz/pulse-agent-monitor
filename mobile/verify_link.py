@@ -1,6 +1,6 @@
 #!/usr/bin/env python3.12
 # -*- coding: utf-8 -*-
-"""PULSE v1.5.0 移动端端到端验证：Chromium 加载 APK 内真实 index.html，
+"""PULSE v1.6.0 移动端端到端验证：Chromium 加载 APK 内真实 index.html，
 注入与 MainActivity.NativeBridge 行为一致的模拟桥，请求 PC v2.0.0 真实服务。"""
 import base64
 import json
@@ -13,7 +13,7 @@ import urllib.request
 import websocket
 
 # 用法：
-#   1) 构建 APK 后解出页面：unzip -o PULSE_v1.5.0.apk 'assets/*' -d /tmp/pulse_e2e
+#   1) 构建 APK 后解出页面：unzip -o PULSE_v1.6.0.apk 'assets/*' -d /tmp/pulse_e2e
 #      cp /tmp/pulse_e2e/assets/index.html /tmp/pulse_e2e/index.html
 #      cp -r /tmp/pulse_e2e/assets/fonts /tmp/pulse_e2e/fonts
 #   2) 启动 PC 服务并导出配对信息：
@@ -22,7 +22,7 @@ import websocket
 #   3) python3.12 verify_link.py --info /tmp/pulse_live_info.json --qr /tmp/pulse_pair_qr.png
 import argparse
 
-_ap = argparse.ArgumentParser(description="PULSE v1.5.0 扫码连接 PC 端到端验证")
+_ap = argparse.ArgumentParser(description="PULSE v1.6.0 扫码连接 PC 端到端验证")
 _ap.add_argument("--page-dir", default="/tmp/pulse_e2e", help="含 index.html + fonts/ 的页面目录")
 _ap.add_argument("--info", default="/tmp/pulse_live_info.json", help="PC 服务导出的配对 JSON")
 _ap.add_argument("--qr", default="", help="PC 服务导出的二维码 PNG（可选，用于解码验证）")
@@ -132,7 +132,7 @@ cmd("Emulation.setDeviceMetricsOverride", {
 # 与 MainActivity.java 的 NativeBridge 契约一致：httpGet 在子线程取数后回调 _onData / _onError
 BRIDGE = """
 window.Android = {
-  getVersion: function(){ return '1.5.0'; },
+  getVersion: function(){ return '1.6.0'; },
   vibrate: function(){}, toast: function(){},
   httpGet: function(url){
     fetch(url, {cache:'no-store'})
@@ -166,7 +166,7 @@ d = json.loads(init)
 print("T1", json.dumps(d, ensure_ascii=False))
 check("T1 初始为 5 个本地项目", d["cards"] == 5 and d["remote"] == 0, d["cards"])
 check("T1 状态显示未连接", "未连接 PC" in d["status"], d["status"])
-check("T1 版本 v1.5.0", d["ver"] == "v1.5.0" and d["appver"] == "1.5.0", d["ver"])
+check("T1 版本 v1.6.0", d["ver"] == "v1.6.0" and d["appver"] == "1.6.0", d["ver"])
 check("T1 jsQR 已内联可用", d["jsqr"] == "function", d["jsqr"])
 check("T1 连接面板存在", d["linkSheet"] is True)
 check("T1 tab bar / 顶栏材质 DOM 未改", d["tabbar"] and d["topbar"])
@@ -262,7 +262,7 @@ s = ev("JSON.stringify({"
        "steps:document.querySelectorAll('#sheetBody .step-item').length,"
        "facts:document.querySelectorAll('#sheetBody .remote-fact').length,"
        "logs:document.querySelectorAll('#sheetBody .log-line').length,"
-       "readonly:document.getElementById('sheetBody').innerText.indexOf('只读')>=0,"
+       "readonly:document.getElementById('sheetBody').innerText.indexOf('由 PC 端管理')>=0,"
        "hasStepsTitle:document.getElementById('sheetBody').innerText.indexOf('执行步骤')>=0})")
 sd = json.loads(s)
 print("T6", json.dumps(sd, ensure_ascii=False))
@@ -270,7 +270,7 @@ check("T6 抽屉打开且为远端内容", sd["open"] and sd["hasStepsTitle"], s
 check("T6 步骤四态渲染", sd["steps"] > 0, sd["steps"])
 check("T6 运行指标 5 项", sd["facts"] == 5, sd["facts"])
 check("T6 最近日志渲染", sd["logs"] > 0, sd["logs"])
-check("T6 明确标注只读", sd["readonly"] is True)
+check("T6 明确标注 PC 管理（含命令操作提示）", sd["readonly"] is True)
 ov = ev("(function(){var f=document.querySelectorAll('#sheetBody .remote-fact');"
         "return Array.prototype.some.call(f,function(e){return e.scrollWidth>e.clientWidth+2;});})()")
 check("T6 指标卡长文本无溢出重叠", ov is False, "overflow=" + str(ov))
